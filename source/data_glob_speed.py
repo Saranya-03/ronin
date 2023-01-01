@@ -72,6 +72,7 @@ class GlobSpeedSequence(CompiledSequence):
         self.orientations = quaternion.as_float_array(ori_q)[start_frame:]
         self.gt_pos = tango_pos[start_frame:]
 
+
     def get_feature(self):
         return self.features
 
