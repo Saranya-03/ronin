@@ -15,6 +15,7 @@ from data_glob_speed import *
 from transformations import *
 from metric import compute_ate_rte
 from model_resnet1d import *
+from scipy.spatial.transform import Rotation as R
 
 _input_channel, _output_channel = 6, 2
 _fc_config = {'fc_dim': 512, 'in_dim': 7, 'dropout': 0.5, 'trans_planes': 128}
@@ -36,6 +37,27 @@ def get_model(arch):
     else:
         raise ValueError('Invalid architecture: ', args.arch)
     return network
+
+def contrastiveModule(input_arrayy,random_degrees,device):
+    input_array=input_arrayy.clone().detach().cpu()
+    input_arrayl=np.concatenate([input_array,np.zeros([input_array.shape[0], 1])], axis=1)
+    for i in range(len(random_degrees)):
+        q = R.from_euler('xyz', [0, 0, random_degrees[i]], degrees=True)
+        input_arrayl[i]=q.apply(input_arrayl[i])
+    input_array=torch.tensor(input_arrayl[:,:-1],device=device)
+    return input_array
+
+def featContrastiveModule(feat,device):
+    feat_clone = feat.clone().detach().cpu()
+    feat_xyz=torch.transpose(feat_clone,1,2).numpy()
+    random_degrees=np.random.randint(1,90,feat.shape[0])
+    for i in range (feat.shape[0]):
+        q = R.from_euler('xyz', [0, 0, random_degrees[i]], degrees=True)
+        feat_xyz[i][:,0:3]=q.apply(feat_xyz[i][:,0:3])
+        feat_xyz[i][:,3:]=q.apply(feat_xyz[i][:,3:])
+    feat_xyz_tensor=torch.transpose(torch.Tensor(feat_xyz),1,2)
+    output_tensor = torch.tensor(feat_xyz_tensor.clone().detach(), device=device)
+    return [output_tensor, random_degrees]
 
 
 def run_test(network, data_loader, device, eval_mode=True):
@@ -133,6 +155,7 @@ def train(args, **kwargs):
     print('Total number of parameters: ', total_params)
 
     criterion = torch.nn.MSELoss()
+    criterion_2 = torch.nn.CosineSimilarity(dim=1)
     optimizer = torch.optim.Adam(network.parameters(), args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=10, verbose=True, eps=1e-12)
 
@@ -180,12 +203,25 @@ def train(args, **kwargs):
             for batch_id, (feat, targ, _, _) in enumerate(train_loader):
                 feat, targ = feat.to(device), targ.to(device)
                 optimizer.zero_grad()
+                feat_contrast, random_degrees = featContrastiveModule(feat, device)
                 pred = network(feat)
                 train_outs.append(pred.cpu().detach().numpy())
                 train_targets.append(targ.cpu().detach().numpy())
                 loss = criterion(pred, targ)
                 loss = torch.mean(loss)
-                loss.backward()
+
+                pred_c = contrastiveModule(pred, random_degrees, device)
+
+                v_2=network(feat_contrast)
+                loss_2 = 0
+                for i in range (len(pred)):
+                    if (torch.norm(pred[i])>0.5):
+                        loss_2-=criterion_2(torch.unsqueeze(v_2[i],0),torch.unsqueeze(pred_c[i],0))
+                    else:
+                        loss_2-=0
+                loss_2=loss_2/len(pred)
+                total_loss=loss+loss_2
+                total_loss.backward()
                 optimizer.step()
                 step += 1
             train_outs = np.concatenate(train_outs, axis=0)
