@@ -42,7 +42,6 @@ class GlobSpeedSequence(CompiledSequence):
         self.info['ori_source'], ori, self.info['source_ori_error'] = select_orientation_source(
             data_path, self.max_ori_error, self.grv_only)
 
-
         with h5py.File(osp.join(data_path, 'data.hdf5')) as f:
             gyro_uncalib = f['synced/gyro_uncalib']
             acce_uncalib = f['synced/acce']
