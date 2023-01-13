@@ -16,6 +16,7 @@ from transformations import *
 from metric import compute_ate_rte
 from model_resnet1d import *
 from scipy.spatial.transform import Rotation as R
+from torch.nn.functional import normalize
 
 _input_channel, _output_channel = 6, 2
 _fc_config = {'fc_dim': 512, 'in_dim': 7, 'dropout': 0.5, 'trans_planes': 128}
@@ -38,25 +39,50 @@ def get_model(arch):
         raise ValueError('Invalid architecture: ', args.arch)
     return network
 
-def contrastiveModule(input_arrayy,random_degrees,device):
-    input_array=input_arrayy.clone().detach().cpu()
-    input_arrayl=np.concatenate([input_array,np.zeros([input_array.shape[0], 1])], axis=1)
-    for i in range(len(random_degrees)):
-        q = R.from_euler('xyz', [0, 0, random_degrees[i]], degrees=True)
-        input_arrayl[i]=q.apply(input_arrayl[i])
-    input_array=torch.tensor(input_arrayl[:,:-1],device=device)
-    return input_array
+def targetTransformationModule(input_arrayy, random_degrees, device):
+    theta = math.pi / 4  # angle of rotation in radians
+    cos_theta = math.cos(theta)
+    sin_theta = math.sin(theta)
 
-def featContrastiveModule(feat,device):
-    feat_clone = feat.clone().detach().cpu()
-    feat_xyz=torch.transpose(feat_clone,1,2).numpy()
-    random_degrees=np.random.randint(1,90,feat.shape[0])
-    for i in range (feat.shape[0]):
-        q = R.from_euler('xyz', [0, 0, random_degrees[i]], degrees=True)
-        feat_xyz[i][:,0:3]=q.apply(feat_xyz[i][:,0:3])
-        feat_xyz[i][:,3:]=q.apply(feat_xyz[i][:,3:])
-    feat_xyz_tensor=torch.transpose(torch.Tensor(feat_xyz),1,2)
-    output_tensor = torch.tensor(feat_xyz_tensor.clone().detach(), device=device)
+    # rotation matrix
+    Rz = torch.tensor([[cos_theta, -sin_theta, 0],
+                       [sin_theta, cos_theta, 0],
+                       [0, 0, 1]],device=device)
+
+    zeros = torch.zeros((input_arrayy.shape[0], 1), dtype=input_arrayy.dtype, device=input_arrayy.device)
+    input_arrayy = torch.cat([input_arrayy, zeros], dim=1)
+
+
+    # for i in range(len(random_degrees)):
+    #     q = R.from_euler('xyz', [0, 0, random_degrees[i]], degrees=True)
+    #     input_arrayl[i]=q.apply(input_arrayl[i])
+    input_arrayy=torch.mm(input_arrayy,Rz)
+    input_arrayy=input_arrayy[:,:-1]
+    # input_array=torch.tensor(input_arrayl[:,:-1],device=device)
+
+    return input_arrayy
+
+def featTransformationModule(feat, device):
+    feat_clone = feat.clone()
+    theta = -math.pi / 4  # angle of rotation in radians
+    cos_theta = math.cos(theta)
+    sin_theta = math.sin(theta)
+    random_degrees=[]
+
+    # rotation matrix
+    Rz = torch.tensor([[cos_theta, -sin_theta, 0],
+                       [sin_theta, cos_theta, 0],
+                       [0, 0, 1]], device=device)
+
+    feat_xyz=torch.transpose(feat_clone,1,2)
+    # print(feat_xyz[:,:,0:3].shape)
+    # print(feat_xyz[:,:,0:3])
+    for i in range (len(feat_xyz)):
+        feat_xyz[i][:,0:3]=torch.mm(feat_xyz[i][:,0:3],Rz)
+        feat_xyz[i][:,3:]=torch.mm(feat_xyz[i][:,3:],Rz)
+    # print(torch.cat([torch.transpose(feat,1,2),feat_xyz],dim=2).cpu().numpy()[0][0])
+    feat_xyz_tensor=torch.transpose(feat_xyz,1,2)
+    output_tensor = feat_xyz_tensor
     return [output_tensor, random_degrees]
 
 
@@ -154,8 +180,9 @@ def train(args, **kwargs):
     total_params = network.get_num_params()
     print('Total number of parameters: ', total_params)
 
+    criterion_cosine = torch.nn.CosineSimilarity(dim=1)
+    criterion_cosineEmbedded=torch.nn.CosineEmbeddingLoss()
     criterion = torch.nn.MSELoss()
-    criterion_2 = torch.nn.CosineSimilarity(dim=1)
     optimizer = torch.optim.Adam(network.parameters(), args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=10, verbose=True, eps=1e-12)
 
@@ -203,24 +230,33 @@ def train(args, **kwargs):
             for batch_id, (feat, targ, _, _) in enumerate(train_loader):
                 feat, targ = feat.to(device), targ.to(device)
                 optimizer.zero_grad()
-                feat_contrast, random_degrees = featContrastiveModule(feat, device)
+                feat_contrast, random_degrees = featTransformationModule(feat, device)
                 pred = network(feat)
                 train_outs.append(pred.cpu().detach().numpy())
                 train_targets.append(targ.cpu().detach().numpy())
-                loss = criterion(pred, targ)
-                loss = torch.mean(loss)
+                feat=feat.detach().requires_grad_(False)
+                pred_copy=pred.detach().requires_grad_(False)
 
-                pred_c = contrastiveModule(pred, random_degrees, device)
+                pred_c = targetTransformationModule(pred, random_degrees, device)
 
                 v_2=network(feat_contrast)
-                loss_2 = 0
-                for i in range (len(pred)):
-                    if (torch.norm(pred[i])>0.5):
-                        loss_2-=criterion_2(torch.unsqueeze(v_2[i],0),torch.unsqueeze(pred_c[i],0))
+                # loss_2=criterion_cosineEmbedded(pred_c,v_2,torch.ones(len(pred_c),device=device))
+
+
+                for i in range(len(pred)):
+                    if (i==0):
+                        loss_2=1-criterion_cosine(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
                     else:
-                        loss_2-=0
+                        if (torch.norm(pred_copy[i]) > 0.5):
+                            loss_2 += 1-criterion_cosine(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                        else:
+                            loss_2 += 0
+
+
                 loss_2=loss_2/len(pred)
-                total_loss=loss+loss_2
+                # loss_1 = criterion(pred_c.to(torch.float32), v_2.to(torch.float32))
+                # loss_1=torch.mean(loss_1).to(torch.float32)
+                total_loss=loss_2
                 total_loss.backward()
                 optimizer.step()
                 step += 1
@@ -233,6 +269,7 @@ def train(args, **kwargs):
             print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
                 epoch, end_t - start_t, train_losses, np.average(train_losses)))
             train_losses_all.append(np.average(train_losses))
+            print("Cosine similarity: "+str(loss_2))
 
             if summary_writer is not None:
                 add_summary(summary_writer, train_losses, epoch + 1, 'train')
