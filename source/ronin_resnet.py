@@ -1,4 +1,5 @@
 import os
+import pdb
 import time
 from os import path as osp
 
@@ -39,7 +40,8 @@ def get_model(arch):
         raise ValueError('Invalid architecture: ', args.arch)
     return network
 
-def targetTransformationModule(input_arrayy, random_degrees, device):
+def targetTransformationModule(input_array, random_degrees, device):
+    input_arrayy=input_array.clone()
     theta = math.pi / 4  # angle of rotation in radians
     cos_theta = math.cos(theta)
     sin_theta = math.sin(theta)
@@ -64,7 +66,7 @@ def targetTransformationModule(input_arrayy, random_degrees, device):
 
 def featTransformationModule(feat, device):
     feat_clone = feat.clone()
-    theta = -math.pi / 4  # angle of rotation in radians
+    theta = math.pi / 4  # angle of rotation in radians
     cos_theta = math.cos(theta)
     sin_theta = math.sin(theta)
     random_degrees=[]
@@ -75,14 +77,18 @@ def featTransformationModule(feat, device):
                        [0, 0, 1]], device=device)
 
     feat_xyz=torch.transpose(feat_clone,1,2)
+    # pdb.set_trace()
+    m=feat_xyz.clone()
     # print(feat_xyz[:,:,0:3].shape)
     # print(feat_xyz[:,:,0:3])
     for i in range (len(feat_xyz)):
-        feat_xyz[i][:,0:3]=torch.mm(feat_xyz[i][:,0:3],Rz)
-        feat_xyz[i][:,3:]=torch.mm(feat_xyz[i][:,3:],Rz)
+        feat_xyz[i][:,0:3]=torch.mm(m[i][:,0:3],Rz)
+        feat_xyz[i][:,3:]=torch.mm(m[i][:,3:],Rz)
+        feat_xyz[i]=torch.cat([torch.mm(m[i][:,0:3],Rz),torch.mm(m[i][:,3:],Rz)],dim=1)
     # print(torch.cat([torch.transpose(feat,1,2),feat_xyz],dim=2).cpu().numpy()[0][0])
     feat_xyz_tensor=torch.transpose(feat_xyz,1,2)
     output_tensor = feat_xyz_tensor
+
     return [output_tensor, random_degrees]
 
 
@@ -245,18 +251,17 @@ def train(args, **kwargs):
 
                 for i in range(len(pred)):
                     if (i==0):
-                        loss_2=1-criterion_cosine(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                        loss_2=-criterion_cosine(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
                     else:
                         if (torch.norm(pred_copy[i]) > 0.5):
-                            loss_2 += 1-criterion_cosine(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                            loss_2 -= criterion_cosine(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
                         else:
                             loss_2 += 0
 
-
                 loss_2=loss_2/len(pred)
-                # loss_1 = criterion(pred_c.to(torch.float32), v_2.to(torch.float32))
-                # loss_1=torch.mean(loss_1).to(torch.float32)
-                total_loss=loss_2
+                loss_1 = criterion(pred, targ)
+                loss_1=torch.mean(loss_1)
+                total_loss=loss_2+loss_1
                 total_loss.backward()
                 optimizer.step()
                 step += 1
