@@ -66,15 +66,25 @@ def targetTransformationModule(input_array, random_degrees, device):
 
 def featTransformationModule(feat, device):
     feat_clone = feat.clone()
-    theta = math.pi / 4  # angle of rotation in radians
-    cos_theta = math.cos(theta)
-    sin_theta = math.sin(theta)
-    random_degrees=[]
-
+    random_torch_rotation=[]
+    thetaa = math.pi/4  # angle of rotation in radians
+    cos_thetaa = math.cos(thetaa)
+    sin_thetaa = math.sin(thetaa)
     # rotation matrix
-    Rz = torch.tensor([[cos_theta, -sin_theta, 0],
-                       [sin_theta, cos_theta, 0],
+    Rzz = torch.tensor([[cos_thetaa, -sin_thetaa, 0],
+                       [sin_thetaa, cos_thetaa, 0],
                        [0, 0, 1]], device=device)
+
+    random_degrees = [random.uniform(0, math.pi/2) for j in range (feat.shape[0])]
+    for i in range (feat.shape[0]):
+        theta = random_degrees[i]  # angle of rotation in radians
+        cos_theta = math.cos(theta)
+        sin_theta = math.sin(theta)
+        # rotation matrix
+        Rz = torch.tensor([[cos_theta, -sin_theta, 0],
+                           [sin_theta, cos_theta, 0],
+                           [0, 0, 1]], device=device)
+        random_torch_rotation.append(Rz)
 
     feat_xyz=torch.transpose(feat_clone,1,2)
     # pdb.set_trace()
@@ -82,10 +92,14 @@ def featTransformationModule(feat, device):
     # print(feat_xyz[:,:,0:3].shape)
     # print(feat_xyz[:,:,0:3])
     for i in range (len(feat_xyz)):
-        feat_xyz[i]=torch.cat([torch.mm(m[i][:,0:3],Rz),torch.mm(m[i][:,3:],Rz)],dim=1)
+        # feat_xyz[i]=torch.cat([torch.mm(m[i][:,0:3],random_torch_rotation[i]),torch.mm(m[i][:,3:],random_torch_rotation[i])],dim=1)
+        feat_xyz[i] = torch.cat([torch.mm(m[i][:, 0:3], Rzz), torch.mm(m[i][:, 3:], Rzz)], dim=1)
+        import pdb
+        pdb.set_trace()
     # print(torch.cat([torch.transpose(feat,1,2),feat_xyz],dim=2).cpu().numpy()[0][0])
     feat_xyz_tensor=torch.transpose(feat_xyz,1,2)
     output_tensor = feat_xyz_tensor
+
 
     return [output_tensor, random_degrees]
 
