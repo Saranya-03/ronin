@@ -82,8 +82,6 @@ def featTransformationModule(feat, device):
     # print(feat_xyz[:,:,0:3].shape)
     # print(feat_xyz[:,:,0:3])
     for i in range (len(feat_xyz)):
-        feat_xyz[i][:,0:3]=torch.mm(m[i][:,0:3],Rz)
-        feat_xyz[i][:,3:]=torch.mm(m[i][:,3:],Rz)
         feat_xyz[i]=torch.cat([torch.mm(m[i][:,0:3],Rz),torch.mm(m[i][:,3:],Rz)],dim=1)
     # print(torch.cat([torch.transpose(feat,1,2),feat_xyz],dim=2).cpu().numpy()[0][0])
     feat_xyz_tensor=torch.transpose(feat_xyz,1,2)
