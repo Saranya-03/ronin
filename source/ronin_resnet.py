@@ -19,6 +19,10 @@ from model_resnet1d import *
 from scipy.spatial.transform import Rotation as R
 from torch.nn.functional import normalize
 
+import neptune.new as neptune
+
+
+
 _input_channel, _output_channel = 6, 2
 _fc_config = {'fc_dim': 512, 'in_dim': 7, 'dropout': 0.5, 'trans_planes': 128}
 
@@ -284,7 +288,9 @@ def train(args, **kwargs):
             print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
                 epoch, end_t - start_t, train_losses, np.average(train_losses)))
             train_losses_all.append(np.average(train_losses))
-            print("Cosine similarity: "+str(loss_2))
+            run["navigator/train/batch/total_loss"].append(np.average(train_losses))
+            run["navigator/train/batch/CosineSimilarity"].append(loss_2)
+            print("navigator/Cosine similarity: "+str(loss_2))
 
             if summary_writer is not None:
                 add_summary(summary_writer, train_losses, epoch + 1, 'train')
@@ -315,6 +321,7 @@ def train(args, **kwargs):
                         torch.save({'model_state_dict': network.state_dict(),
                                     'epoch': epoch,
                                     'optimizer_state_dict': optimizer.state_dict()}, model_path)
+                        run["navigator/model_checkpoints/my_model"].upload(model_path)
                         print('Model saved to ', model_path)
 
             total_epoch = epoch
@@ -329,6 +336,7 @@ def train(args, **kwargs):
         torch.save({'model_state_dict': network.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'epoch': total_epoch}, model_path)
+        run["navigator/model_checkpoints/my_model"].upload(model_path)
         print('Checkpoint saved to ', model_path)
 
     return train_losses_all, val_losses_all
@@ -474,6 +482,12 @@ def write_config(args):
 
 
 if __name__ == '__main__':
+    run = neptune.init_run(
+        project="Navigator/Navigator",
+        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJmYTk4NGQwYS1lMWQxLTQ3YWQtYmQ3NC1lMzBjNDVmNDI3MzAifQ==",
+    )
+
+
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -506,6 +520,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     np.set_printoptions(formatter={'all': lambda x: '{:.6f}'.format(x)})
+    run["parameters"] = args
 
     if args.mode == 'train':
         train(args)
