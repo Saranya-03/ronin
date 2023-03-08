@@ -454,6 +454,10 @@ def test_sequence(args):
             np.save(osp.join(args.out_dir, data + '_gsn.npy'),
                     np.concatenate([pos_pred[:, :2], pos_gt[:, :2]], axis=1))
             plt.savefig(osp.join(args.out_dir, data + '_gsn.png'))
+            model_path_neptune = "navigator/out_dir/"+str(data)+"_gsn.png"
+            run[model_path_neptune].upload(osp.join(args.out_dir, data + '_gsn.png'))
+            # run[model_path_neptune].upload(osp.join(args.out_dir, data + '_gsn.png'))
+
 
         plt.close('all')
 
