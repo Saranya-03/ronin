@@ -21,8 +21,6 @@ from torch.nn.functional import normalize
 
 import neptune.new as neptune
 
-
-
 _input_channel, _output_channel = 6, 2
 _fc_config = {'fc_dim': 512, 'in_dim': 7, 'dropout': 0.5, 'trans_planes': 128}
 
@@ -44,8 +42,9 @@ def get_model(arch):
         raise ValueError('Invalid architecture: ', args.arch)
     return network
 
+
 def targetTransformationModule(input_array, random_degrees, device):
-    input_arrayy=input_array.clone()
+    input_arrayy = input_array.clone()
     theta = math.pi / 4  # angle of rotation in radians
     cos_theta = math.cos(theta)
     sin_theta = math.sin(theta)
@@ -53,34 +52,34 @@ def targetTransformationModule(input_array, random_degrees, device):
     # rotation matrix
     Rz = torch.tensor([[cos_theta, -sin_theta, 0],
                        [sin_theta, cos_theta, 0],
-                       [0, 0, 1]],device=device)
+                       [0, 0, 1]], device=device)
 
     zeros = torch.zeros((input_arrayy.shape[0], 1), dtype=input_arrayy.dtype, device=input_arrayy.device)
     input_arrayy = torch.cat([input_arrayy, zeros], dim=1)
 
-
     # for i in range(len(random_degrees)):
     #     q = R.from_euler('xyz', [0, 0, random_degrees[i]], degrees=True)
     #     input_arrayl[i]=q.apply(input_arrayl[i])
-    input_arrayy=torch.mm(input_arrayy,Rz)
-    input_arrayy=input_arrayy[:,:-1]
+    input_arrayy = torch.mm(input_arrayy, Rz)
+    input_arrayy = input_arrayy[:, :-1]
     # input_array=torch.tensor(input_arrayl[:,:-1],device=device)
 
     return input_arrayy
 
+
 def featTransformationModule(feat, device):
     feat_clone = feat.clone()
-    random_torch_rotation=[]
-    thetaa = math.pi/4  # angle of rotation in radians
+    random_torch_rotation = []
+    thetaa = math.pi / 4  # angle of rotation in radians
     cos_thetaa = math.cos(thetaa)
     sin_thetaa = math.sin(thetaa)
     # rotation matrix
     Rzz = torch.tensor([[cos_thetaa, -sin_thetaa, 0],
-                       [sin_thetaa, cos_thetaa, 0],
-                       [0, 0, 1]], device=device)
+                        [sin_thetaa, cos_thetaa, 0],
+                        [0, 0, 1]], device=device)
 
-    random_degrees = [random.uniform(0, math.pi/2) for j in range (feat.shape[0])]
-    for i in range (feat.shape[0]):
+    random_degrees = [random.uniform(0, math.pi / 2) for j in range(feat.shape[0])]
+    for i in range(feat.shape[0]):
         theta = random_degrees[i]  # angle of rotation in radians
         cos_theta = math.cos(theta)
         sin_theta = math.sin(theta)
@@ -90,17 +89,18 @@ def featTransformationModule(feat, device):
                            [0, 0, 1]], device=device)
         random_torch_rotation.append(Rz)
 
-    feat_xyz=torch.transpose(feat_clone,1,2)
+    feat_xyz = torch.transpose(feat_clone, 1, 2)
     # pdb.set_trace()
-    m=feat_xyz.clone()
+    m = feat_xyz.clone()
     # print(feat_xyz[:,:,0:3].shape)
     # print(feat_xyz[:,:,0:3])
-    for i in range (len(feat_xyz)):
-        feat_xyz[i]=torch.cat([torch.mm(m[i][:,0:3],random_torch_rotation[i]),torch.mm(m[i][:,3:],random_torch_rotation[i])],dim=1)
+    for i in range(len(feat_xyz)):
+        feat_xyz[i] = torch.cat(
+            [torch.mm(m[i][:, 0:3], random_torch_rotation[i]), torch.mm(m[i][:, 3:], random_torch_rotation[i])], dim=1)
         # feat_xyz[i] = torch.cat([torch.mm(m[i][:, 0:3], Rzz), torch.mm(m[i][:, 3:], Rzz)], dim=1)
 
     # print(torch.cat([torch.transpose(feat,1,2),feat_xyz],dim=2).cpu().numpy()[0][0])
-    feat_xyz_tensor=torch.transpose(feat_xyz,1,2)
+    feat_xyz_tensor = torch.transpose(feat_xyz, 1, 2)
     output_tensor = feat_xyz_tensor
 
     return [output_tensor, random_degrees]
@@ -164,6 +164,106 @@ def get_dataset_from_list(root_dir, list_path, args, **kwargs):
     return get_dataset(root_dir, data_list, args, **kwargs)
 
 
+def pre_train_model(args, train_loader, **kwargs):
+    device = torch.device('cuda:0' if torch.cuda.is_available() and not args.cpu else 'cpu')
+    network = get_model(args.arch).to(device)
+
+    criterion_cosine = torch.nn.CosineSimilarity(dim=1)
+    optimizer = torch.optim.Adam(network.parameters(), args.lr)
+
+    summary_writer = None
+    start_epoch = 0
+    if args.continue_from is not None and osp.exists(args.continue_from):
+        checkpoints = torch.load(args.continue_from)
+        start_epoch = checkpoints.get('epoch', 0)
+        network.load_state_dict(checkpoints.get('model_state_dict'))
+        optimizer.load_state_dict(checkpoints.get('optimizer_state_dict'))
+
+    if args.out_dir is not None and osp.exists(osp.join(args.out_dir, 'logs')):
+        summary_writer = SummaryWriter(osp.join(args.out_dir, 'logs'))
+        summary_writer.add_text('info', 'total_param: {}'.format(total_params))
+
+    print('Start from epoch {}'.format(start_epoch))
+    total_epoch = start_epoch
+    train_losses_all =[]
+
+    try:
+        for epoch in range(start_epoch, args.epochs):
+            start_t = time.time()
+            network.train()
+            losses = []
+            for batch_id, (feat, targ, _, _) in enumerate(train_loader):
+                feat, targ = feat.to(device), targ.to(device)
+                optimizer.zero_grad()
+                feat_contrast, random_degrees = featTransformationModule(feat, device)
+                pred = network(feat)
+                # ...train_outs.append(pred.cpu().detach().numpy())
+                feat = feat.detach().requires_grad_(False)
+                pred_copy = pred.detach().requires_grad_(False)
+
+                pred_c = targetTransformationModule(pred, random_degrees,
+                                                    device)  # velocity get by first pass through NN then rotate
+
+                v_2 = network(feat_contrast)  # velocity get by first rotate and then pass through NN
+
+                for i in range(len(pred)):
+                    if i == 0:
+                        loss = -criterion_cosine(torch.unsqueeze(v_2[i], 0),
+                                                   torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                    else:
+                        if torch.norm(pred_copy[i]) > 0.5:
+                            loss -= criterion_cosine(torch.unsqueeze(v_2[i], 0),
+                                                       torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                        else:
+                            loss += 0
+
+                loss = loss / len(pred)
+                loss.backward()
+                optimizer.step()
+                step += 1
+            train_outs = np.concatenate(train_outs, axis=0)
+            train_losses = np.average(losses, axis=0)
+
+            end_t = time.time()
+            print('-------------------------')
+            print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
+                epoch, end_t - start_t, train_losses, np.average(train_losses)))
+            train_losses_all.append(np.average(train_losses))
+            run["navigator/train/batch/CosineSimilarity"].append(loss)
+            print("navigator/Cosine similarity: " + str(loss))
+
+            if summary_writer is not None:
+                add_summary(summary_writer, train_losses, epoch + 1, 'train')
+                summary_writer.add_scalar('optimizer/lr', optimizer.param_groups[0]['lr'], epoch)
+
+            if args.out_dir is not None and osp.isdir(args.out_dir):
+                if epoch % 20 == 0:
+                    model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_%d.pt' % epoch)
+                    torch.save({'model_state_dict': network.state_dict(),
+                                'epoch': epoch,
+                                'optimizer_state_dict': optimizer.state_dict()}, model_path)
+                    model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(epoch)
+                    run[model_path_neptune].upload(model_path)
+                    print('Model saved to ', model_path)
+
+            total_epoch = epoch
+
+    except KeyboardInterrupt:
+        print('-' * 60)
+        print('Early terminate')
+
+    print('Training complete')
+
+    if args.out_dir:
+        model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_latest.pt')
+        torch.save({'model_state_dict': network.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'epoch': total_epoch}, model_path)
+        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(epoch)
+        run[model_path_neptune].upload(model_path)
+        print('Checkpoint saved to ', model_path)
+
+
 def train(args, **kwargs):
     # Loading data
     start_t = time.time()
@@ -201,7 +301,7 @@ def train(args, **kwargs):
     print('Total number of parameters: ', total_params)
 
     criterion_cosine = torch.nn.CosineSimilarity(dim=1)
-    criterion_cosineEmbedded=torch.nn.CosineEmbeddingLoss()
+    criterion_cosineEmbedded = torch.nn.CosineEmbeddingLoss()
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(network.parameters(), args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=10, verbose=True, eps=1e-12)
@@ -254,28 +354,29 @@ def train(args, **kwargs):
                 pred = network(feat)
                 train_outs.append(pred.cpu().detach().numpy())
                 train_targets.append(targ.cpu().detach().numpy())
-                feat=feat.detach().requires_grad_(False)
-                pred_copy=pred.detach().requires_grad_(False)
+                feat = feat.detach().requires_grad_(False)
+                pred_copy = pred.detach().requires_grad_(False)
 
                 pred_c = targetTransformationModule(pred, random_degrees, device)
 
-                v_2=network(feat_contrast)
+                v_2 = network(feat_contrast)
                 # loss_2=criterion_cosineEmbedded(pred_c,v_2,torch.ones(len(pred_c),device=device))
 
-
                 for i in range(len(pred)):
-                    if (i==0):
-                        loss_2=-criterion_cosine(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                    if (i == 0):
+                        loss_2 = -criterion_cosine(torch.unsqueeze(v_2[i], 0),
+                                                   torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
                     else:
                         if (torch.norm(pred_copy[i]) > 0.5):
-                            loss_2 -= criterion_cosine(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                            loss_2 -= criterion_cosine(torch.unsqueeze(v_2[i], 0),
+                                                       torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
                         else:
                             loss_2 += 0
 
-                loss_2=loss_2/len(pred)
+                loss_2 = loss_2 / len(pred)
                 loss_1 = criterion(pred, targ)
-                loss_1=torch.mean(loss_1)
-                total_loss=loss_2+loss_1
+                loss_1 = torch.mean(loss_1)
+                total_loss = loss_2 + loss_1
                 total_loss.backward()
                 optimizer.step()
                 step += 1
@@ -290,7 +391,7 @@ def train(args, **kwargs):
             train_losses_all.append(np.average(train_losses))
             run["navigator/train/batch/total_loss"].append(np.average(train_losses))
             run["navigator/train/batch/CosineSimilarity"].append(loss_2)
-            print("navigator/Cosine similarity: "+str(loss_2))
+            print("navigator/Cosine similarity: " + str(loss_2))
 
             if summary_writer is not None:
                 add_summary(summary_writer, train_losses, epoch + 1, 'train')
@@ -316,12 +417,12 @@ def train(args, **kwargs):
                         print('Model saved to ', model_path)
             else:
                 if args.out_dir is not None and osp.isdir(args.out_dir):
-                    if (epoch%20==0):
+                    if (epoch % 20 == 0):
                         model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_%d.pt' % epoch)
                         torch.save({'model_state_dict': network.state_dict(),
                                     'epoch': epoch,
                                     'optimizer_state_dict': optimizer.state_dict()}, model_path)
-                        model_path_neptune="navigator/model_checkpoints/checkpoint_"+str(epoch)
+                        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(epoch)
                         run[model_path_neptune].upload(model_path)
                         print('Model saved to ', model_path)
 
@@ -454,10 +555,9 @@ def test_sequence(args):
             np.save(osp.join(args.out_dir, data + '_gsn.npy'),
                     np.concatenate([pos_pred[:, :2], pos_gt[:, :2]], axis=1))
             plt.savefig(osp.join(args.out_dir, data + '_gsn.png'))
-            model_path_neptune = "navigator/out_dir/"+str(data)+"_gsn.png"
+            model_path_neptune = "navigator/out_dir/" + str(data) + "_gsn.png"
             run[model_path_neptune].upload(osp.join(args.out_dir, data + '_gsn.png'))
             # run[model_path_neptune].upload(osp.join(args.out_dir, data + '_gsn.png'))
-
 
         plt.close('all')
 
@@ -492,7 +592,6 @@ if __name__ == '__main__':
         project="Navigator/Navigator",
         api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJmYTk4NGQwYS1lMWQxLTQ3YWQtYmQ3NC1lMzBjNDVmNDI3MzAifQ==",
     )
-
 
     import argparse
 
