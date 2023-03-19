@@ -215,6 +215,7 @@ def pre_train_model(args, train_loader, **kwargs):
         summary_writer.add_text('info', 'total_param: {}'.format(total_params))
 
     print('Start from epoch {}'.format(start_epoch))
+    step = 0
     total_epoch = start_epoch
     train_losses_all = []
 
