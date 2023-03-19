@@ -224,6 +224,7 @@ def pre_train_model(args, train_loader, **kwargs):
             start_t = time.time()
             network.train()
             losses = []
+            loss = 0  # Is it correct to initialize as zeo?????????????
             for batch_id, (feat, targ, _, _) in enumerate(train_loader):
                 feat, targ = feat.to(device), targ.to(device)
                 optimizer.zero_grad()
@@ -253,7 +254,6 @@ def pre_train_model(args, train_loader, **kwargs):
                 loss.backward()
                 optimizer.step()
                 step += 1
-            train_outs = np.concatenate(train_outs, axis=0)
             train_losses = np.average(losses, axis=0)
 
             end_t = time.time()
@@ -291,7 +291,7 @@ def pre_train_model(args, train_loader, **kwargs):
         torch.save({'model_state_dict': network.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'epoch': total_epoch}, model_path)
-        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(epoch)
+        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(total_epoch)
         run[model_path_neptune].upload(model_path)
         print('Checkpoint saved to ', model_path)
 
@@ -500,7 +500,7 @@ def train(args, **kwargs):
         torch.save({'model_state_dict': network.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'epoch': total_epoch}, model_path)
-        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(epoch)
+        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(total_epoch)
         run[model_path_neptune].upload(model_path)
         print('Checkpoint saved to ', model_path)
 
@@ -587,6 +587,7 @@ def test_sequence(args):
 
         # Plot figures
         kp = preds.shape[1]
+        targ_names = []         # Is it correct ???????????
         if kp == 2:
             targ_names = ['vx', 'vy']
         elif kp == 3:
