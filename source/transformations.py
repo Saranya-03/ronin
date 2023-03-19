@@ -69,7 +69,7 @@ class RandomHoriRotate:
         self.max_angle = max_angle
 
     def __call__(self, feat, targ, **kwargs):
-        angle = np.random.random() * self.max_angle
+        angle = np.random.random() * self.max_angle         # Angle between 0-max_angle
         rm = np.array([[math.cos(angle), -math.sin(angle)],
                        [math.sin(angle), math.cos(angle)]])
         feat_aug = np.copy(feat)

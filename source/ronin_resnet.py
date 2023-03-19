@@ -98,7 +98,7 @@ def get_dataset(root_dir, data_list, args, **kwargs):
         grv_only = True
 
     if args.dataset == 'ronin':
-        seq_type = GlobSpeedSequence
+        seq_type = GlobSpeedSequence             # To load hdf5 file
     elif args.dataset == 'ridi':
         from data_ridi import RIDIGlobSpeedSequence
         seq_type = RIDIGlobSpeedSequence
