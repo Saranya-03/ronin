@@ -9,6 +9,7 @@ import json
 
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
+
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
@@ -254,6 +255,9 @@ def pre_train_model(args, train_loader, **kwargs):
                 loss.backward()
                 optimizer.step()
                 step += 1
+                print('Epoch {}, time usage: {:.3f}'.format(
+                    epoch, loss))
+            print("********", losses)
             train_losses = np.average(losses, axis=0)
 
             end_t = time.time()
