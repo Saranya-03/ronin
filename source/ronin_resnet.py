@@ -222,6 +222,8 @@ def pre_train_model(args, train_loader, **kwargs):
 
     try:
         for epoch in range(start_epoch, args.epochs):
+            if epoch == 1:
+                return -1
             start_t = time.time()
             network.train()
             losses = []
@@ -240,12 +242,12 @@ def pre_train_model(args, train_loader, **kwargs):
                 # velocity by first rotate and then pass through NN
                 v_2 = network(feat_contrast)
 
-                loss = -criterion_cosine(torch.unsqueeze(v_2[0], 0),
-                                         torch.unsqueeze(pred_c[0], 0)).requires_grad_(True)
+                loss = (1 - criterion_cosine(torch.unsqueeze(v_2[0], 0),
+                                             torch.unsqueeze(pred_c[0], 0))).requires_grad_(True)
                 for i in range(1, len(pred)):
                     if torch.norm(pred_copy[i]) > 0.5:
-                        loss -= criterion_cosine(torch.unsqueeze(v_2[i], 0),
-                                                 torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                        loss += (1 - criterion_cosine(torch.unsqueeze(v_2[i], 0),
+                                                      torch.unsqueeze(pred_c[i], 0))).requires_grad_(True)
                     else:
                         loss += 0
 
@@ -368,6 +370,8 @@ def train(args, **kwargs):
         print('Number of val samples: {}'.format(len(val_dataset)))
 
     pre_train_model(args, pretrain_data_loader, **kwargs)
+    print("Completed Pre-training")
+    print("------------------------------------------------------------------------------------------")
 
     # Fine-tuning by adding some additional layers and freezing some low level layers
     if not torch.cuda.is_available() or args.cpu:
