@@ -225,7 +225,7 @@ def pre_train_model(args, train_loader, **kwargs):
             start_t = time.time()
             network.train()
             losses = []
-            loss = 0  # Is it correct to initialize as zeo?????????????
+
             for batch_id, (feat, targ, _, _) in enumerate(train_loader):
                 feat, targ = feat.to(device), targ.to(device)
                 optimizer.zero_grad()
@@ -240,33 +240,30 @@ def pre_train_model(args, train_loader, **kwargs):
                 # velocity by first rotate and then pass through NN
                 v_2 = network(feat_contrast)
 
-                for i in range(len(pred)):
-                    if i == 0:
-                        loss = -criterion_cosine(torch.unsqueeze(v_2[i], 0),
+                loss = -criterion_cosine(torch.unsqueeze(v_2[0], 0),
+                                         torch.unsqueeze(pred_c[0], 0)).requires_grad_(True)
+                for i in range(1, len(pred)):
+                    if torch.norm(pred_copy[i]) > 0.5:
+                        loss -= criterion_cosine(torch.unsqueeze(v_2[i], 0),
                                                  torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
                     else:
-                        if torch.norm(pred_copy[i]) > 0.5:
-                            loss -= criterion_cosine(torch.unsqueeze(v_2[i], 0),
-                                                     torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
-                        else:
-                            loss += 0
+                        loss += 0
 
                 loss = loss / len(pred)
                 loss.backward()
                 optimizer.step()
                 step += 1
-                print('Epoch {}, time usage: {:.3f}'.format(
-                    epoch, loss))
-            print("********", losses)
-            train_losses = np.average(losses, axis=0)
+                losses.append(loss.detach().numpy())
+
+            train_losses = np.array([np.average(losses)])
 
             end_t = time.time()
             print('-------------------------')
-            print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
-                epoch, end_t - start_t, train_losses, np.average(train_losses)))
-            train_losses_all.append(np.average(train_losses))
-            run["navigator/train/batch/CosineSimilarity"].append(loss)
-            print("navigator/Cosine similarity: " + str(loss))
+            print('Epoch {}, time usage: {:.3f}s, average loss: {:.6f}'.format(
+                epoch, end_t - start_t, train_losses[0]))
+            train_losses_all.append(train_losses)
+            run["navigator/train/batch/CosineSimilarity"].append(train_losses[0])
+            print("navigator/Cosine similarity: " + str(train_losses[0]))
 
             if summary_writer is not None:
                 add_summary(summary_writer, train_losses, epoch + 1, 'train')
@@ -591,7 +588,7 @@ def test_sequence(args):
 
         # Plot figures
         kp = preds.shape[1]
-        targ_names = []         # Is it correct ???????????
+        targ_names = []  # Is it correct ???????????
         if kp == 2:
             targ_names = ['vx', 'vy']
         elif kp == 3:
