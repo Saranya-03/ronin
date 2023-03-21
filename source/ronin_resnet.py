@@ -253,7 +253,7 @@ def pre_train_model(args, train_loader, **kwargs):
                 loss.backward()
                 optimizer.step()
                 step += 1
-                losses.append(loss.detach().numpy())
+                losses.append(loss.cpu().detach().numpy())
 
             train_losses = np.array([np.average(losses)])
 
