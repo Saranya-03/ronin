@@ -202,6 +202,7 @@ def pre_train_model(args, train_loader, **kwargs):
 
     criterion_cosine = torch.nn.CosineSimilarity(dim=1)
     optimizer = torch.optim.Adam(network.parameters(), args.lr)
+    criterion_cosineEmbedded=torch.nn.CosineEmbeddingLoss(margin=0.0)
 
     summary_writer = None
     start_epoch = 0
@@ -240,15 +241,7 @@ def pre_train_model(args, train_loader, **kwargs):
                 # velocity by first rotate and then pass through NN
                 v_2 = network(feat_contrast)
 
-                loss = (1 - criterion_cosine(torch.unsqueeze(v_2[0], 0),
-                                             torch.unsqueeze(pred_c[0], 0))).requires_grad_(True)
-                for i in range(1, len(pred)):
-                    if torch.norm(pred_copy[i]) > 0.5:
-                        loss += (1 - criterion_cosine(torch.unsqueeze(v_2[i], 0),
-                                                      torch.unsqueeze(pred_c[i], 0))).requires_grad_(True)
-                    else:
-                        loss += 0
-
+                loss = criterion_cosineEmbedded(v_2, pred_c, torch.ones(1, device=device))
                 loss = loss / len(pred)
                 loss.backward()
                 optimizer.step()
@@ -312,12 +305,14 @@ def add_new_layers(pretrained_model):
 
 # Freeze low level layers of the module
 def freeze_low_level_layers(model):
-    num_layers = len(model.children())
+    num_layers = len(list(model.children()))
 
     # Freeze the first half layers of the module
     for i, child in enumerate(model.children()):
+        # print("***** ", i, child)
         if i < num_layers // 2:
             for param in child.parameters():
+                # print("@@@@@@@@@@@@@@@@@@@@@@", i, child, param)
                 param.requires_grad = False
         else:
             for param in child.parameters():
@@ -373,14 +368,15 @@ def train(args, **kwargs):
 
     # Fine-tuning by adding some additional layers and freezing some low level layers
     model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_latest.pt')
+    print(osp.exists(model_path))
     if not torch.cuda.is_available() or args.cpu:
-        checkpoint = torch.load(args.model_path, map_location=lambda storage, location: storage)
+        checkpoint = torch.load(model_path, map_location=lambda storage, location: storage)
     else:
-        checkpoint = torch.load(args.model_path)
+        checkpoint = torch.load(model_path)
     pretrained_model = get_model(args.arch)
     pretrained_model.load_state_dict(checkpoint['model_state_dict'])
     pretrained_model.eval().to(device)
-    print('Model {} loaded to device {}.'.format(args.model_path, device))
+    print('Model {} loaded to device {}.'.format(model_path, device))
     pretrained_params = pretrained_model.parameters()
     print('Pretrained parameters {}'.format(pretrained_params))
 
