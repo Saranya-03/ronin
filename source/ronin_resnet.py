@@ -222,8 +222,6 @@ def pre_train_model(args, train_loader, **kwargs):
 
     try:
         for epoch in range(start_epoch, args.epochs):
-            if epoch == 1:
-                return -1
             start_t = time.time()
             network.train()
             losses = []
@@ -374,6 +372,7 @@ def train(args, **kwargs):
     print("------------------------------------------------------------------------------------------")
 
     # Fine-tuning by adding some additional layers and freezing some low level layers
+    model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_latest.pt')
     if not torch.cuda.is_available() or args.cpu:
         checkpoint = torch.load(args.model_path, map_location=lambda storage, location: storage)
     else:
