@@ -72,6 +72,7 @@ class GlobSpeedSequence(CompiledSequence):
         self.orientations = quaternion.as_float_array(ori_q)[start_frame:]
         self.gt_pos = tango_pos[start_frame:]
 
+
     def get_feature(self):
         return self.features
 
@@ -129,12 +130,13 @@ class DenseSequenceDataset(Dataset):
             frame_id = max(self.window_size, min(frame_id, self.targets[seq_id].shape[0] - 1))
 
         feat = self.features[seq_id][frame_id - self.window_size:frame_id]
+        ts = self.ts[seq_id][frame_id - self.window_size:frame_id]
         targ = self.targets[seq_id][frame_id]
 
         if self.transform is not None:
             feat, targ = self.transform(feat, targ)
 
-        return feat.astype(np.float32).T, targ.astype(np.float32), seq_id, frame_id
+        return feat.astype(np.float32).T, targ.astype(np.float32), seq_id, frame_id, ts.astype(np.float32)
 
     def __len__(self):
         return len(self.index_map)
@@ -169,17 +171,18 @@ class StridedSequenceDataset(Dataset):
 
     def __getitem__(self, item):
         seq_id, frame_id = self.index_map[item][0], self.index_map[item][1]
-        if self.random_shift > 0:
-            frame_id += random.randrange(-self.random_shift, self.random_shift)
-            frame_id = max(self.window_size, min(frame_id, self.targets[seq_id].shape[0] - 1))
+        # if self.random_shift > 0:
+        #     frame_id += random.randrange(-self.random_shift, self.random_shift)
+        #     frame_id = max(self.window_size, min(frame_id, self.targets[seq_id].shape[0] - 1))
 
         feat = self.features[seq_id][frame_id:frame_id + self.window_size]
+        ts = self.ts[seq_id][frame_id:frame_id + self.window_size]
         targ = self.targets[seq_id][frame_id]
 
         if self.transform is not None:
             feat, targ = self.transform(feat, targ)
 
-        return feat.astype(np.float32).T, targ.astype(np.float32), seq_id, frame_id
+        return feat.astype(np.float32).T, targ.astype(np.float32), seq_id, frame_id, ts
 
     def __len__(self):
         return len(self.index_map)
@@ -238,12 +241,13 @@ class SequenceToSequenceDataset(Dataset):
             frame_id = max(self.window_size, min(frame_id, self.targets[seq_id].shape[0] - 1))
 
         feat = np.copy(self.features[seq_id][frame_id - self.window_size:frame_id])
+        ts = np.copy(self.ts[seq_id][frame_id - self.window_size:frame_id])
         targ = np.copy(self.targets[seq_id][frame_id - self.window_size:frame_id])
 
         if self.transform is not None:
             feat, targ = self.transform(feat, targ)
 
-        return feat.astype(np.float32), targ.astype(np.float32), seq_id, frame_id
+        return feat.astype(np.float32), targ.astype(np.float32), seq_id, frame_id, ts.astype(np.float32)
 
     def __len__(self):
         return len(self.index_map)
