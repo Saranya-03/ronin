@@ -13,6 +13,7 @@ from scipy.interpolate import interp1d
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
+from custom_dataloader import *
 from data_glob_speed import *
 from transformations import *
 from metric import compute_ate_rte
@@ -99,12 +100,12 @@ def featTransformationModule(feat, device):
                         [sin_thetaa, cos_thetaa, 0],
                         [0, 0, 1]], device=device)
 
-    # random_degrees = [random.uniform(0, math.pi/2) for j in range (feat.shape[0])]
+    random_degrees = [random.uniform(0, math.pi / 2) for j in range(feat.shape[0])]
     # random_degrees=[math.pi/90 for j in range (feat.shape[0])]
-    random_degrees = []
-    degrees = [math.pi / 18, math.pi / 12, math.pi / 6, math.pi / 9]
-    for i in range(feat.shape[0]):
-        random_degrees.append(degrees[int(i % 4)])
+    # random_degrees=[]
+    # degrees=[math.pi/18,math.pi/12,math.pi/6,math.pi/9]
+    # for i in range (feat.shape[0]):
+    #     random_degrees.append(degrees[int(i%4)])
 
     for i in range(feat.shape[0]):
         theta = random_degrees[i]  # angle of rotation in radians
@@ -118,7 +119,6 @@ def featTransformationModule(feat, device):
         random_torch_rotation.append(Rz)
 
     feat_xyz = torch.transpose(feat_clone, 1, 2)
-    # pdb.set_trace()
     m = feat_xyz.clone()
     # print(feat_xyz[:,:,0:3].shape)
     # print(feat_xyz[:,:,0:3])
@@ -139,13 +139,33 @@ def run_test(network, data_loader, device, eval_mode=True):
     preds_all = []
     if eval_mode:
         network.eval()
-    for bid, (feat, targ, _, _) in enumerate(data_loader):
+    for bid, (feat, targ, _, _, ts) in enumerate(data_loader):
         pred = network(feat.to(device)).cpu().detach().numpy()
         targets_all.append(targ.detach().numpy())
         preds_all.append(pred)
     targets_all = np.concatenate(targets_all, axis=0)
     preds_all = np.concatenate(preds_all, axis=0)
     return targets_all, preds_all
+
+
+# def run_test(network, data_loader, device, eval_mode=True):
+#     targets_all = []
+#     preds_all = []
+#     ts_all = []
+#     feat_all = []
+#     if eval_mode:
+#         network.eval()
+#     for bid, (feat, targ, _, _, ts) in enumerate(data_loader):
+#         pred = network(feat.to(device)).cpu().detach().numpy()
+#         targets_all.append(targ.detach().numpy())
+#         preds_all.append(pred)
+#         feat_all.append(feat.detach().numpy())
+#         ts_all.append(ts.detach().numpy())
+#     targets_all = np.concatenate(targets_all, axis=0)
+#     preds_all = np.concatenate(preds_all, axis=0)
+#     feat_all = np.concatenate(feat_all, axis=0)
+#     ts_all = np.concatenate(ts_all, axis=0)
+#     return targets_all, preds_all, feat_all, ts_all
 
 
 def add_summary(writer, loss, step, mode):
@@ -162,9 +182,10 @@ def get_dataset(root_dir, data_list, args, **kwargs):
 
     random_shift, shuffle, transforms, grv_only = 0, False, None, False
     if mode == 'train':
-        random_shift = args.step_size // 2
-        shuffle = True
-        transforms = RandomHoriRotate(math.pi * 2)
+        # random_shift = args.step_size // 2
+        # shuffle = True
+        shuffle = False
+        # transforms = RandomHoriRotate(math.pi * 2)
     elif mode == 'val':
         shuffle = True
     elif mode == 'test':
@@ -193,16 +214,16 @@ def get_dataset_from_list(root_dir, list_path, args, **kwargs):
 
 
 # pre-training using unlabelled data
-def pre_train_model(args, train_loader, **kwargs):
+def pre_train_model(args, train_loader, phy_predicted, **kwargs):
     device = torch.device('cuda:0' if torch.cuda.is_available() and not args.cpu else 'cpu')
     network = get_model(args.arch).to(device)
 
     total_params = network.get_num_params()
-    print('Total number of parameters: ', total_params)
 
     criterion_cosine = torch.nn.CosineSimilarity(dim=1)
     optimizer = torch.optim.Adam(network.parameters(), args.lr)
-    criterion_cosineEmbedded=torch.nn.CosineEmbeddingLoss(margin=0.0)
+    criterion_cosineEmbedded = torch.nn.CosineEmbeddingLoss(margin=0.0)
+    criterion = torch.nn.MSELoss()
 
     summary_writer = None
     start_epoch = 0
@@ -223,14 +244,18 @@ def pre_train_model(args, train_loader, **kwargs):
 
     try:
         for epoch in range(start_epoch, args.epochs):
+
             start_t = time.time()
             network.train()
             losses = []
 
-            for batch_id, (feat, targ, _, _) in enumerate(train_loader):
+            k = 0
+            loss_m =[]
+            for batch_id, (feat, targ, _, _, ts) in enumerate(train_loader):
                 feat, targ = feat.to(device), targ.to(device)
                 optimizer.zero_grad()
                 feat_contrast, random_degrees = featTransformationModule(feat, device)
+
                 pred = network(feat)
                 pred_copy = pred.detach().requires_grad_(False)
 
@@ -241,12 +266,32 @@ def pre_train_model(args, train_loader, **kwargs):
                 # velocity by first rotate and then pass through NN
                 v_2 = network(feat_contrast)
 
-                loss = criterion_cosineEmbedded(v_2, pred_c, torch.ones(1, device=device))
-                loss = loss / len(pred)
+                loss1 = criterion_cosineEmbedded(v_2, pred_c, torch.ones(1, device=device))
+                # if (batch_id==0):
+                #     print("pred_copy.......", pred_copy)
+                #     print("pred.......", pred)
+                #     print("phy_predicted[batch_id].....", phy_predicted[batch_id])
+                #     print("correct target...", targ)
+                #     print("correct torch.tensor(phy_predicted[batch_id]...", torch.tensor(phy_predicted[batch_id]))
+                #     print("correct pred...", pred)
+                #     print(type(torch.tensor(phy_predicted[batch_id])))
+                #     print(type(pred))
+                # loss_mse = criterion(pred_copy, phy_predicted[batch_id])
+                # loss_mse = criterion(targ, torch.tensor(phy_predicted[batch_id]))
+                # loss_mse = criterion(pred, torch.tensor(phy_predicted[batch_id]))
+                loss_mse = criterion(pred, torch.tensor(phy_predicted[batch_id]))
+                loss_m.append(loss_mse.cpu().detach().numpy())
+                loss2 = torch.mean(loss_mse)
+                loss = loss1 + loss2
                 loss.backward()
                 optimizer.step()
                 step += 1
                 losses.append(loss.cpu().detach().numpy())
+
+                # print(batch_id, "losses...", np.array([np.average(losses)])[0])
+                # print("loss mse...", loss_mse)
+            print("mse....", loss_mse)
+            print("..mse loss avg......", np.average(loss_m))
 
             train_losses = np.array([np.average(losses)])
 
@@ -255,7 +300,7 @@ def pre_train_model(args, train_loader, **kwargs):
             print('Epoch {}, time usage: {:.3f}s, average loss: {:.6f}'.format(
                 epoch, end_t - start_t, train_losses[0]))
             train_losses_all.append(train_losses)
-            run["navigator/train/batch/CosineSimilarity"].append(train_losses[0])
+            # run["navigator/train/batch/CosineSimilarity"].append(train_losses[0])
             print("navigator/Cosine similarity: " + str(train_losses[0]))
 
             if summary_writer is not None:
@@ -268,8 +313,8 @@ def pre_train_model(args, train_loader, **kwargs):
                     torch.save({'model_state_dict': network.state_dict(),
                                 'epoch': epoch,
                                 'optimizer_state_dict': optimizer.state_dict()}, model_path)
-                    model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(epoch)
-                    run[model_path_neptune].upload(model_path)
+                    # model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(epoch)
+                    # run[model_path_neptune].upload(model_path)
                     print('Model saved to ', model_path)
 
             total_epoch = epoch
@@ -285,22 +330,39 @@ def pre_train_model(args, train_loader, **kwargs):
         torch.save({'model_state_dict': network.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'epoch': total_epoch}, model_path)
-        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(total_epoch)
-        run[model_path_neptune].upload(model_path)
+        # model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(total_epoch)
+        # run[model_path_neptune].upload(model_path)
         print('Checkpoint saved to ', model_path)
 
 
 # Create a new sequential module with the pre-trained model and additional layers
 def add_new_layers(pretrained_model):
-    new_model = nn.Sequential(
-        pretrained_model,
-        nn.Flatten(),
-        nn.Linear(2048, 512),
-        nn.ReLU(inplace=True),
-        nn.Dropout(0.5),
-        nn.Linear(512, 1)  # check whether 1 or not............
-    )
-    return new_model
+    print("Starting to add new layers.............................")
+    pretrained_model.fc1 = nn.Linear(pretrained_model.planes[-1] * BasicBlock1D.expansion, 512)
+    pretrained_model.bn1 = nn.BatchNorm1d(512)
+    pretrained_model.fc2 = nn.Linear(512, _output_channel)
+    # pretrained_model.fc = nn.Sequential(
+    #     nn.Linear(pretrained_model.fc.in_features, 100),
+    #     nn.ReLU(),
+    #     nn.Dropout(p=0.5),
+    #     nn.Linear(100, 1)
+    # )
+
+    # pretrained_model.fc = nn.Sequential(
+    #     nn.Linear(pretrained_model.fc.in_features, 1),
+    #     nn.Sigmoid()
+    # )
+    #
+    # new_model = nn.Sequential(
+    #     pretrained_model,
+    #     nn.Flatten(),
+    #     nn.Linear(2048, 512),
+    #     nn.ReLU(inplace=True),
+    #     nn.Dropout(0.5),
+    #     nn.Linear(512, 1)  # check whether 1 or not............
+    # )
+    print("Completed adding layers..............")
+    return pretrained_model
 
 
 # Freeze low level layers of the module
@@ -320,23 +382,271 @@ def freeze_low_level_layers(model):
     return model
 
 
+def predict_velocity(data_loader, **kwargs):
+    """
+    Predict velocity with velocity calculation module
+    """
+    # ts_all = []
+    # feat_all = []
+    bid_phypred = []
+    init_vel = data_loader.dataset.targets[0][0,:2]
+    last_vel = init_vel
+    # final_targ = [init_vel]
+    final_targ = {}
+    for bid, (feat, targ, seq_id, frame_id, ts) in enumerate(data_loader):
+        feat = feat.detach().numpy().transpose(0, 2, 1)
+        ts = ts.detach().numpy()
+        # feat_all.append(feat.detach().numpy())
+        # ts_all.append(ts)
+        bv = np.zeros([feat.shape[0], 2], dtype=np.float32)
+        for i in range(feat.shape[0]):
+            if i == 0:
+                bv[0] = last_vel
+            dts = ts[i][1:] - ts[i][:-1]
+            vel = np.zeros([feat.shape[1], 2], dtype=np.float32)
+            vel[0] = last_vel
+            # vel[1:] = feat_all[i][1:, 3:5] * dts[:, np.newaxis]  # current acc * change in time
+            # vel[1:] = feat_all[i][:-1, 3:5] * dts[:, np.newaxis]   # last acc * change in time
+            # vel[1:] = (feat_all[i][1:, 3:5] + feat_all[i][:-1, 3:5]) / 2 * dts[:, np.newaxis]   # average acc * change in time
+            vel[1:] = (feat[i][1:, 3:5] - feat[i][:-1, 3:5]) * dts[:, np.newaxis]  # change in acc * change in time
+            vel_c = np.cumsum(vel, axis=0)
+            # final_targ.append(vel_c[-1])
+            last_vel = vel_c[-1]
+            if i+1 < feat.shape[0]:
+                bv[i+1] = vel_c[-1]
+        # final_targ.append([bid,bv])
+        final_targ[bid] = bv
+    return final_targ
+
+    # feat_all = np.concatenate(feat_all, axis=0)
+    # ts_all = np.concatenate(ts_all, axis=0)
+    # feat_all = feat_all.transpose(0, 2, 1)
+
+    # for i in range(feat_all.shape[0]):
+    #     dts = ts_all[i][1:] - ts_all[i][:-1]
+    #     vel = np.zeros([feat_all.shape[1], 2])
+    #     vel[0] = last_vel
+    #     # vel[1:] = feat_all[i][1:, 3:5] * dts[:, np.newaxis]  # current acc * change in time
+    #     # vel[1:] = feat_all[i][:-1, 3:5] * dts[:, np.newaxis]   # last acc * change in time
+    #     # vel[1:] = (feat_all[i][1:, 3:5] + feat_all[i][:-1, 3:5]) / 2 * dts[:, np.newaxis]   # average acc * change in time
+    #     vel[1:] = ((feat_all[i][1:, 3:5] - feat_all[i][:-1, 3:5]) * dts[:, np.newaxis])   # change in acc * change in time
+    #     vel_c = np.cumsum(vel, axis=0)
+    #     final_targ.append(vel_c[-1])
+    #     last_vel = vel_c[-1]
+
+
+# def predict_velocity(data_loader, **kwargs):
+#     """
+#     Predict velocity with velocity calculation module
+#     """
+#     criterion = torch.nn.MSELoss()
+#     targets_all = []
+#     ts_all = []
+#     feat_all = []
+#     print("Start of enumerator.................")
+#     for bid, (feat, targ, seq_id, frame_id, ts) in enumerate(data_loader):
+#         # print("ts in data_glob.......",seq_id[:30], frame_id[:30], ts[:30])
+#         targets_all.append(targ.detach().numpy())
+#         feat_all.append(feat.detach().numpy())
+#         ts_all.append(ts)
+#     targets_all = np.concatenate(targets_all, axis=0)
+#     feat_all = np.concatenate(feat_all, axis=0)
+#     ts_all = np.concatenate(ts_all, axis=0)
+#     # print("ts all..", ts_all)
+#     # print("feat shape...", feat_all.shape)
+#
+#     feat_all = feat_all.transpose(0, 2, 1)
+#     # print("feat shape...", feat_all.shape, len(data_loader.dataset.features))
+#     # print("targ shape...", targets_all.shape, len(data_loader.dataset.targets))
+#     # print("ts shape...", ts_all.shape, len(data_loader.dataset.ts))
+#     #
+#     # print("ts_all", ts_all)
+#     # print("ts...", data_loader.dataset.ts)
+#     # print("feature_all", feat_all)
+#     # print("features...", data_loader.dataset.features)
+#     # print("targets_all", targets_all)
+#     # print("targets...", data_loader.dataset.targets)
+#
+#     #
+#     init_vel = targets_all[0]
+#     last_vel = init_vel
+#     print("init vel...", init_vel)
+#     final_targ = [init_vel]
+#     for i in range(feat_all.shape[0]):
+#         dts = ts_all[i][1:] - ts_all[i][:-1]
+#         vel = np.zeros([feat_all.shape[1], 2])
+#         vel[0] = last_vel
+#         # vel[1:] = feat_all[i][1:, 3:5] * dts[:, np.newaxis]  # current acc * change in time
+#         # vel[1:] = feat_all[i][:-1, 3:5] * dts[:, np.newaxis]   # last acc * change in time
+#         # vel[1:] = (feat_all[i][1:, 3:5] + feat_all[i][:-1, 3:5]) / 2 * dts[:, np.newaxis]   # average acc * change in time
+#         vel[1:] = ((feat_all[i][1:, 3:5] - feat_all[i][:-1, 3:5]) * dts[:, np.newaxis])   # change in acc * change in time
+#         vel_c = np.cumsum(vel, axis=0)
+#         # if i==0:
+#         #     # print(vel)
+#         #     print("////////////////////////////////////////////////")
+#         #     print(vel_c)
+#         #     print("*******", feat_all[i][:, 3:5], dts)
+#         # if (i<10):
+#         #     print("last vel.........", vel_c[-1], targets_all[i+1])
+#         final_targ.append(vel_c[-1])
+#         last_vel = vel_c[-1]
+#     print(len(final_targ))
+#     loss1 = criterion(torch.tensor(final_targ[:-1]), torch.tensor(targets_all))
+#     loss1 = torch.mean(loss1)
+#     print("mse loss1 ", loss1)
+#
+#     # for i in range(len(data_loader.dataset.ts)):
+#     #     print(i, len(data_loader.dataset.ts[i]))
+#     #     print(data_loader.dataset.ts[i])
+#     #     print(data_loader.dataset.ts[i][1:] - data_loader.dataset.ts[i][:-1])
+#
+#     # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#
+#     # dataset = data_loader.dataset
+#     # seq_id = 0
+#     #
+#     # ts = dataset.ts[seq_id]
+#     # # ("index map....", dataset.index_map)
+#     # ind = np.array([i[1] for i in dataset.index_map if i[0] == seq_id], dtype=np.int)
+#     #
+#     # init_vel = dataset.targets[seq_id][0, :2]
+#     # dts1 = ts[1:] - ts[:-1]
+#     # # print("shape of dt1 ", len(dts1))
+#     #
+#     # # # /////////////////////
+#     # print("init vel...", init_vel)
+#     # err = 0
+#     #
+#     # last_vel = init_vel
+#     # pred = []
+#     # targ = []
+#     # for i in range(1, 201):
+#     #     last_vel = last_vel + (
+#     #                 (dataset.features[seq_id][i, 3:5] - dataset.features[seq_id][i - 1, 3:5]) * (ts[i] - ts[i - 1]))
+#     #     # print(i, "feature...", dataset.features[seq_id][i - 1, 3:5], ts[i] - ts[i - 1])
+#     #     # print("predict phy...", last_vel)
+#     #     # print("target.....", dataset.targets[seq_id][i, :2])
+#     #     # print((ts[i] - ts[i - 1]))
+#     #     err += (last_vel - dataset.targets[seq_id][i, :2]) ** 2
+#     #     pred.append(last_vel)
+#     #     targ.append(dataset.targets[seq_id][i, :2])
+#     #     # print("//////////////////////////////////////////////////////////////////")
+#     # loss = criterion(torch.tensor(pred), torch.tensor(targ))
+#     # loss = torch.mean(loss)
+#     # print("mse loss ", loss)
+#
+#     # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#
+#     # targets_all = []
+#     # feat_all = []
+#     # ts_all = []
+#     # pred_all = []
+#     # for i in range(len(dataset.targets)):
+#     #     # np.concatenate(targets_all, dataset.targets[i])
+#     #     print("Shapes...............")
+#     #     print(dataset.targets[i].shape)
+#     #     print(dataset.features[i].shape)
+#     #     print(dataset.ts[i].shape)
+#     #     targets_all.append([dataset.targets[i][j] for j in range(0, dataset.targets[i].shape[0], step_size)])
+#     #     feat_all.append([dataset.features[i][j] for j in range(0, dataset.features[i].shape[0], step_size)])
+#     #     ts_all.append([dataset.ts[i][j] for j in range(0, dataset.ts[i].shape[0], step_size)])
+#     # targets_all = np.concatenate(targets_all, axis=0)
+#     # feat_all = np.concatenate(feat_all, axis=0)
+#     # ts_all = np.concatenate(ts_all, axis=0)
+#     #
+#     # print("shapes...", targets_all.shape, feat_all.shape, ts_all.shape)
+#     #
+#     # print("target %%%%%%%%%%%%%%%%%%%", targets_all)
+#     # print(len(targets_all))
+#
+#     # init_vel = targets_all[0, :2]
+#     # dts = ts_all[1:] - ts_all[:-1]
+#     #
+#     # print("init vel...", init_vel)
+#     # last_vel = init_vel
+#     # for i in range(1, 10):
+#     #     last_vel = last_vel + (feat_all[i - 1, 3:5] * (ts_all[i] - ts_all[i - 1]))
+#     #     print("predict phy...", last_vel)
+#     #     print("target.....", targets_all[i, :2])
+#     #
+#     # vel = np.zeros([targets_all.shape[0] + 2, 2])
+#     # vel[0] = targets_all[0, :2]
+#     # print(len(dts))
+#     # print(len(dts[:, np.newaxis]))
+#     # vel[1:] = feat_all[:-1, :2] * dts[:, np.newaxis]
+#     # vel_c = np.cumsum(vel, axis=0)
+#     # print("vel_c....", vel_c)
+#
+#     # @@@@@@@@@@@@@@@@@@
+#
+#     # vel[1:-1] = np.cumsum(preds[:, :2] * dts, axis=0) + pos[0]
+#
+#     # last_vel = init_vel + sum([(feat_all[i - 1, 3:5] * (ts_all[i] - ts_all[i - 1])) for i in range(1, 10)])
+#
+#     # for bid, (feat, targ, _, _, ts) in enumerate(data_loader):
+#     #     pred = network(feat.to(device)).cpu().detach().numpy()
+#     #     targets_all.append(targ.detach().numpy())
+#     #     preds_all.append(pred)
+#     # targets_all = np.concatenate(targets_all, axis=0)
+#     #
+#     # init_vel = dataset.targets[0, :2]
+#     # tss = train_loader.dataset.ts
+#     #
+#     # dts3 = ds.ts[1:] - ds.ts[:-1]
+#     # dts1 = tss[1:] - tss[:-1]
+#     # print("shape of dt1 ", len(dts1))
+#
+#     # /////////////////////
+#     # print("init vel...", init_vel)
+#     # last_vel = init_vel
+#     # for i in range(1, 10):
+#     #     last_vel = last_vel + (train_loader.dataset.features[seq_id][i - 1, 3:5] * (tss[i] - tss[i - 1]))
+#     #     print((tss[i] - tss[i - 1]))
+#     #     print("predict phy...", last_vel)
+#     #     print("target.....", train_loader.dataset.targets[seq_id][i, :2])
+#
+#     #
+#     # speed = np.cumsum(dataset.features[seq_id][:-1, 3:5] * dts1[:, np.newaxis], axis=0) + init_vel
+#     # # print("shape of speed ", len(speed))
+#     #
+#     # # print("dts1........", dts1)
+#     # print("speed.......", speed)
+#     #
+#     # # ind = np.array([i[1] for i in dataset.index_map if i[0] == seq_id], dtype=np.int)
+#     # # print("ts.......", ts)
+#     # # print("ind........", ind)
+#     # # print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%", ts[ind[1:]] - ts[ind[:-1]])
+#     # dts = np.mean(ts[ind[1:]] - ts[ind[:-1]])
+#     # acc = dataset.features[seq_id][:, 3:]
+#     # # print("&&&&&&&&&&&&&&&&&&")
+#     # # print(dts.shape)
+#     # # print(len(acc))
+#     # # print("acc.......", acc)
+#     # # print("dts.......", dts)
+#     # velocity = acc * dts;
+#     # print("velocity....", velocity)
+#     # # pos[0] = dataset.gt_pos[seq_id][0, :2]
+#     # # pos[1:-1] = np.cumsum(preds[:, :2] * dts, axis=0) + pos[0]
+#     # # pos[-1] = pos[-2]
+#     # # ts_ext = np.concatenate([[ts[0] - 1e-06], ts[ind], [ts[-1] + 1e-06]], axis=0)
+#     # # pos = interp1d(ts_ext, pos, axis=0)(ts)
+#     # return speed, velocity
+
+
 def train(args, **kwargs):
     # Loading data
     start_t = time.time()
     train_dataset = get_dataset_from_list(args.root_dir, args.train_list, args, mode='train')
+    # train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
-    # Get 90% unlabelled data as source_dataset and 10% labelled data as target_dataset
-    source_ds_size = int(0.9 * len(train_dataset))
-    target_ds_size = len(train_dataset) - source_ds_size
-    source_dataset, target_dataset = torch.utils.data.random_split(train_dataset, [source_ds_size, target_ds_size])
+    # //////////////////////////////////////////////////////////////////////
 
-    pretrain_data_loader = DataLoader(source_dataset, batch_size=args.batch_size, shuffle=True)
-    finetune_data_loader = DataLoader(target_dataset, batch_size=args.batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    # train_loader = CustomDataLoader(train_dataset, batch_size=args.batch_size, shuffle=False)
 
     end_t = time.time()
     print('Training set loaded. Feature size: {}, target size: {}. Time usage: {:.3f}s'.format(
         train_dataset.feature_dim, train_dataset.target_dim, end_t - start_t))
-
     val_dataset, val_loader = None, None
     if args.val_list is not None:
         val_dataset = get_dataset_from_list(args.root_dir, args.val_list, args, mode='val')
@@ -354,157 +664,160 @@ def train(args, **kwargs):
         if not osp.isdir(osp.join(args.out_dir, 'logs')):
             os.makedirs(osp.join(args.out_dir, 'logs'))
 
+    # //////////////////////////////////////////////////////////////////////////
+    # predict_velocity(train_loader, train_dataset, **kwargs)
+    # speed, velocity = predict_velocity(train_loader, train_dataset, **kwargs)
+    phy_predicted = predict_velocity(train_loader, **kwargs)
+
     global _fc_config
     _fc_config['in_dim'] = args.window_size // 32 + 1
 
-    # Pre-training
-    print('Number of train samples for pre-training: {}'.format(len(source_dataset)))
+    network = get_model(args.arch).to(device)
+    print('Number of train samples: {}'.format(len(train_dataset)))
     if val_dataset:
         print('Number of val samples: {}'.format(len(val_dataset)))
-
-    pre_train_model(args, pretrain_data_loader, **kwargs)
-    print("Completed Pre-training")
-    print("------------------------------------------------------------------------------------------")
-
-    # Fine-tuning by adding some additional layers and freezing some low level layers
-    model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_latest.pt')
-    print(osp.exists(model_path))
-    if not torch.cuda.is_available() or args.cpu:
-        checkpoint = torch.load(model_path, map_location=lambda storage, location: storage)
-    else:
-        checkpoint = torch.load(model_path)
-    pretrained_model = get_model(args.arch)
-    pretrained_model.load_state_dict(checkpoint['model_state_dict'])
-    pretrained_model.eval().to(device)
-    print('Model {} loaded to device {}.'.format(model_path, device))
-    pretrained_params = pretrained_model.parameters()
-    print('Pretrained parameters {}'.format(pretrained_params))
-
-    network = add_new_layers(pretrained_model)
-    network = freeze_low_level_layers(network)
-
-    print('Number of train samples for fine-tuning: {}'.format(len(target_dataset)))
     total_params = network.get_num_params()
     print('Total number of parameters: ', total_params)
 
-    criterion = torch.nn.MSELoss()
-    optimizer = torch.optim.Adam(network.parameters(), args.lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=10, verbose=True, eps=1e-12)
+    pre_train_model(args, train_loader, phy_predicted, **kwargs)
 
-    start_epoch = 0
-    if args.continue_from is not None and osp.exists(args.continue_from):
-        checkpoints = torch.load(args.continue_from)
-        start_epoch = checkpoints.get('epoch', 0)
-        network.load_state_dict(checkpoints.get('model_state_dict'))
-        optimizer.load_state_dict(checkpoints.get('optimizer_state_dict'))
-
-    if args.out_dir is not None and osp.exists(osp.join(args.out_dir, 'logs')):
-        summary_writer = SummaryWriter(osp.join(args.out_dir, 'logs'))
-        summary_writer.add_text('info', 'total_param: {}'.format(total_params))
-
-    step = 0
-    best_val_loss = np.inf
-
-    print('Start from epoch {}'.format(start_epoch))
-    total_epoch = start_epoch
-    train_losses_all, val_losses_all = [], []
-
-    # Get the initial loss.
-    init_train_targ, init_train_pred = run_test(network, finetune_data_loader, device, eval_mode=False)
-
-    init_train_loss = np.mean((init_train_targ - init_train_pred) ** 2, axis=0)
-    train_losses_all.append(np.mean(init_train_loss))
-    print('-------------------------')
-    print('Init: average loss: {}/{:.6f}'.format(init_train_loss, train_losses_all[-1]))
-    if summary_writer is not None:
-        add_summary(summary_writer, init_train_loss, 0, 'train')
-
-    if val_loader is not None:
-        init_val_targ, init_val_pred = run_test(network, val_loader, device)
-        init_val_loss = np.mean((init_val_targ - init_val_pred) ** 2, axis=0)
-        val_losses_all.append(np.mean(init_val_loss))
-        print('Validation loss: {}/{:.6f}'.format(init_val_loss, val_losses_all[-1]))
-        if summary_writer is not None:
-            add_summary(summary_writer, init_val_loss, 0, 'val')
-
-    try:
-        for epoch in range(start_epoch, args.epochs):
-            start_t = time.time()
-            network.train()
-            train_outs, train_targets = [], []
-            for batch_id, (feat, targ, _, _) in enumerate(finetune_data_loader):
-                feat, targ = feat.to(device), targ.to(device)
-                optimizer.zero_grad()
-                pred = network(feat)
-                train_outs.append(pred.cpu().detach().numpy())
-                train_targets.append(targ.cpu().detach().numpy())
-
-                loss_1 = criterion(pred, targ)
-                loss_1 = torch.mean(loss_1)
-                loss_1.backward()
-                optimizer.step()
-                step += 1
-            train_outs = np.concatenate(train_outs, axis=0)
-            train_targets = np.concatenate(train_targets, axis=0)
-            train_losses = np.average((train_outs - train_targets) ** 2, axis=0)
-
-            end_t = time.time()
-            print('-------------------------')
-            print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
-                epoch, end_t - start_t, train_losses, np.average(train_losses)))
-            train_losses_all.append(np.average(train_losses))
-            run["navigator/train/batch/total_loss"].append(np.average(train_losses))
-
-            if summary_writer is not None:
-                add_summary(summary_writer, train_losses, epoch + 1, 'train')
-                summary_writer.add_scalar('optimizer/lr', optimizer.param_groups[0]['lr'], epoch)
-
-            if val_loader is not None:
-                network.eval()
-                val_outs, val_targets = run_test(network, val_loader, device)
-                val_losses = np.average((val_outs - val_targets) ** 2, axis=0)
-                avg_loss = np.average(val_losses)
-                print('Validation loss: {}/{:.6f}'.format(val_losses, avg_loss))
-                scheduler.step(avg_loss)
-                if summary_writer is not None:
-                    add_summary(summary_writer, val_losses, epoch + 1, 'val')
-                val_losses_all.append(avg_loss)
-                if avg_loss < best_val_loss:
-                    best_val_loss = avg_loss
-                    if args.out_dir and osp.isdir(args.out_dir):
-                        model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_%d.pt' % epoch)
-                        torch.save({'model_state_dict': network.state_dict(),
-                                    'epoch': epoch,
-                                    'optimizer_state_dict': optimizer.state_dict()}, model_path)
-                        print('Model saved to ', model_path)
-            else:
-                if args.out_dir is not None and osp.isdir(args.out_dir):
-                    if epoch % 20 == 0:
-                        model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_%d.pt' % epoch)
-                        torch.save({'model_state_dict': network.state_dict(),
-                                    'epoch': epoch,
-                                    'optimizer_state_dict': optimizer.state_dict()}, model_path)
-                        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(epoch)
-                        run[model_path_neptune].upload(model_path)
-                        print('Model saved to ', model_path)
-
-            total_epoch = epoch
-
-    except KeyboardInterrupt:
-        print('-' * 60)
-        print('Early terminate')
-
-    print('Training complete')
-    if args.out_dir:
-        model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_latest.pt')
-        torch.save({'model_state_dict': network.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'epoch': total_epoch}, model_path)
-        model_path_neptune = "navigator/model_checkpoints/checkpoint_" + str(total_epoch)
-        run[model_path_neptune].upload(model_path)
-        print('Checkpoint saved to ', model_path)
-
-    return train_losses_all, val_losses_all
+    # # ///////////////////////////////////////////////////////////////////
+    #
+    # # init_tr_targ, init_tr_pred = run_test(network, train_loader, device, eval_mode=False)
+    # init_tr_targ, init_tr_pred = run_test(network, train_loader, device, eval_mode=False)
+    #
+    # print("init_tr_targ .....", init_tr_targ)
+    # # print("pred.....", init_tr_pred)
+    #
+    # # for i in range(10):
+    # #     print(speed[i], " & ", velocity[i], " & ", init_tr_targ[i], " & ", init_tr_pred[i])
+    #
+    # criterion = torch.nn.MSELoss()
+    # criterion_2 = torch.nn.CosineSimilarity(dim=1)
+    # optimizer = torch.optim.Adam(network.parameters(), args.lr)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=10, verbose=True, eps=1e-12)
+    #
+    # start_epoch = 0
+    # if args.continue_from is not None and osp.exists(args.continue_from):
+    #     checkpoints = torch.load(args.continue_from)
+    #     start_epoch = checkpoints.get('epoch', 0)
+    #     network.load_state_dict(checkpoints.get('model_state_dict'))
+    #     optimizer.load_state_dict(checkpoints.get('optimizer_state_dict'))
+    #
+    # if args.out_dir is not None and osp.exists(osp.join(args.out_dir, 'logs')):
+    #     summary_writer = SummaryWriter(osp.join(args.out_dir, 'logs'))
+    #     summary_writer.add_text('info', 'total_param: {}'.format(total_params))
+    #
+    # step = 0
+    # best_val_loss = np.inf
+    #
+    # print('Start from epoch {}'.format(start_epoch))
+    # total_epoch = start_epoch
+    # train_losses_all, val_losses_all = [], []
+    #
+    # # Get the initial loss.
+    # init_train_targ, init_train_pred = run_test(network, train_loader, device, eval_mode=False)
+    #
+    # init_train_loss = np.mean((init_train_targ - init_train_pred) ** 2, axis=0)
+    # train_losses_all.append(np.mean(init_train_loss))
+    # print('-------------------------')
+    # print('Init: average loss: {}/{:.6f}'.format(init_train_loss, train_losses_all[-1]))
+    # if summary_writer is not None:
+    #     add_summary(summary_writer, init_train_loss, 0, 'train')
+    #
+    # if val_loader is not None:
+    #     init_val_targ, init_val_pred = run_test(network, val_loader, device)
+    #     init_val_loss = np.mean((init_val_targ - init_val_pred) ** 2, axis=0)
+    #     val_losses_all.append(np.mean(init_val_loss))
+    #     print('Validation loss: {}/{:.6f}'.format(init_val_loss, val_losses_all[-1]))
+    #     if summary_writer is not None:
+    #         add_summary(summary_writer, init_val_loss, 0, 'val')
+    #
+    # try:
+    #     for epoch in range(start_epoch, args.epochs):
+    #         start_t = time.time()
+    #         network.train()
+    #         train_outs, train_targets = [], []
+    #         for batch_id, (feat, targ, _, _) in enumerate(train_loader):
+    #             feat, targ = feat.to(device), targ.to(device)
+    #             optimizer.zero_grad()
+    #             feat_contrast, random_degrees = featTransformationModule(feat, device)
+    #             pred = network(feat)
+    #             train_outs.append(pred.cpu().detach().numpy())
+    #             train_targets.append(targ.cpu().detach().numpy())
+    #             loss = criterion(pred, targ)
+    #             loss = torch.mean(loss)
+    #
+    #             pred_c = targetTransformationModule(pred, random_degrees, device)
+    #
+    #             v_2 = network(feat_contrast)
+    #             loss_2 = 0
+    #             for i in range(len(pred)):
+    #                 if (torch.norm(pred[i]) > 0.5):
+    #                     loss_2 -= criterion_2(torch.unsqueeze(v_2[i], 0), torch.unsqueeze(pred_c[i], 0))
+    #                 else:
+    #                     loss_2 -= 0
+    #             loss_2 = loss_2 / len(pred)
+    #             total_loss = loss + loss_2
+    #             total_loss.backward()
+    #             optimizer.step()
+    #             step += 1
+    #         train_outs = np.concatenate(train_outs, axis=0)
+    #         train_targets = np.concatenate(train_targets, axis=0)
+    #         train_losses = np.average((train_outs - train_targets) ** 2, axis=0)
+    #
+    #         end_t = time.time()
+    #         print('-------------------------')
+    #         print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
+    #             epoch, end_t - start_t, train_losses, np.average(train_losses)))
+    #         train_losses_all.append(np.average(train_losses))
+    #
+    #         if summary_writer is not None:
+    #             add_summary(summary_writer, train_losses, epoch + 1, 'train')
+    #             summary_writer.add_scalar('optimizer/lr', optimizer.param_groups[0]['lr'], epoch)
+    #
+    #         if val_loader is not None:
+    #             network.eval()
+    #             val_outs, val_targets = run_test(network, val_loader, device)
+    #             val_losses = np.average((val_outs - val_targets) ** 2, axis=0)
+    #             avg_loss = np.average(val_losses)
+    #             print('Validation loss: {}/{:.6f}'.format(val_losses, avg_loss))
+    #             scheduler.step(avg_loss)
+    #             if summary_writer is not None:
+    #                 add_summary(summary_writer, val_losses, epoch + 1, 'val')
+    #             val_losses_all.append(avg_loss)
+    #             if avg_loss < best_val_loss:
+    #                 best_val_loss = avg_loss
+    #                 if args.out_dir and osp.isdir(args.out_dir):
+    #                     model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_%d.pt' % epoch)
+    #                     torch.save({'model_state_dict': network.state_dict(),
+    #                                 'epoch': epoch,
+    #                                 'optimizer_state_dict': optimizer.state_dict()}, model_path)
+    #                     print('Model saved to ', model_path)
+    #         else:
+    #             if args.out_dir is not None and osp.isdir(args.out_dir):
+    #                 if (epoch % 20 == 0):
+    #                     model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_%d.pt' % epoch)
+    #                     torch.save({'model_state_dict': network.state_dict(),
+    #                                 'epoch': epoch,
+    #                                 'optimizer_state_dict': optimizer.state_dict()}, model_path)
+    #                     print('Model saved to ', model_path)
+    #
+    #         total_epoch = epoch
+    #
+    # except KeyboardInterrupt:
+    #     print('-' * 60)
+    #     print('Early terminate')
+    #
+    # print('Training complete')
+    # if args.out_dir:
+    #     model_path = osp.join(args.out_dir, 'checkpoints', 'checkpoint_latest.pt')
+    #     torch.save({'model_state_dict': network.state_dict(),
+    #                 'optimizer_state_dict': optimizer.state_dict(),
+    #                 'epoch': total_epoch}, model_path)
+    #     print('Checkpoint saved to ', model_path)
+    #
+    # return train_losses_all, val_losses_all
 
 
 def recon_traj_with_preds(dataset, preds, seq_id=0, **kwargs):
@@ -518,8 +831,14 @@ def recon_traj_with_preds(dataset, preds, seq_id=0, **kwargs):
     pos[0] = dataset.gt_pos[seq_id][0, :2]
     pos[1:-1] = np.cumsum(preds[:, :2] * dts, axis=0) + pos[0]
     pos[-1] = pos[-2]
+    print("pos ", pos)
     ts_ext = np.concatenate([[ts[0] - 1e-06], ts[ind], [ts[-1] + 1e-06]], axis=0)
+    print("ts ", ts)
+    print("ind ", ind)
+    print("dts ", dts)
+    print("ts_ext ", ts_ext, ts_ext.shape, pos.shape)
     pos = interp1d(ts_ext, pos, axis=0)(ts)
+    print("pos ", pos)
     return pos
 
 
@@ -618,9 +937,9 @@ def test_sequence(args):
             np.save(osp.join(args.out_dir, data + '_gsn.npy'),
                     np.concatenate([pos_pred[:, :2], pos_gt[:, :2]], axis=1))
             plt.savefig(osp.join(args.out_dir, data + '_gsn.png'))
-            model_path_neptune = "navigator/out_dir/" + str(data) + "_gsn.png"
-            run[model_path_neptune].upload(osp.join(args.out_dir, data + '_gsn.png'))
-            run[model_path_neptune].upload(osp.join(args.out_dir, data + '_gsn.png'))
+            # model_path_neptune = "navigator/out_dir/" + str(data) + "_gsn.png"
+            # run[model_path_neptune].upload(osp.join(args.out_dir, data + '_gsn.png'))
+            # run[model_path_neptune].upload(osp.join(args.out_dir, data + '_gsn.png'))
 
         plt.close('all')
 
@@ -651,10 +970,10 @@ def write_config(args):
 
 
 if __name__ == '__main__':
-    run = neptune.init_run(
-        project="Navigator/Navigator",
-        api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJmYTk4NGQwYS1lMWQxLTQ3YWQtYmQ3NC1lMzBjNDVmNDI3MzAifQ==",
-    )
+    # run = neptune.init_run(
+    #     project="Navigator/Navigator",
+    #     api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJmYTk4NGQwYS1lMWQxLTQ3YWQtYmQ3NC1lMzBjNDVmNDI3MzAifQ==",
+    # )
 
     import argparse
 
@@ -688,7 +1007,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     np.set_printoptions(formatter={'all': lambda x: '{:.6f}'.format(x)})
-    run["parameters"] = args
+    # run["parameters"] = args
 
     if args.mode == 'train':
         train(args)
