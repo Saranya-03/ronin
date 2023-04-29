@@ -336,7 +336,11 @@ def train(args, **kwargs):
                             loss_2 += 0
 
                 # loss_2=loss_2/len(pred)
-                loss_1 = criterion(pred, torch.tensor(phy_predicted[batch_id]))
+                print("dev pred...", pred.device)
+                print("device predic...", torch.tensor(phy_predicted[batch_id]).device)
+                print(v_2.device)
+                print(pred_c.device)
+                loss_1 = criterion(pred.to(device), torch.tensor(phy_predicted[batch_id]).to(device))
                 loss_2=criterion(v_2,pred_c)
                 total_loss = loss_1+ loss_2
 
