@@ -340,10 +340,9 @@ def train(args, **kwargs):
 
                 # loss_2=loss_2/len(pred)
                 loss_1 = criterion(pred.to(device), torch.tensor(phy_predicted[batch_id], device=device))
-                print("dev pred...", pred.device)
-                print("device predic...", torch.tensor(phy_predicted[batch_id], device=device).device)
                 loss_2 = criterion(v_2, pred_c)
                 total_loss = loss_1 + loss_2
+                total_loss = loss_2
 
                 optimizer.zero_grad()
                 total_loss.backward()
@@ -359,6 +358,8 @@ def train(args, **kwargs):
                 epoch, end_t - start_t, train_losses, np.average(train_losses)))
             train_losses_all.append(np.average(train_losses))
             print("navigator/total_loss: " + str(total_loss))
+            print("loss 1..phy loss ", loss_1)
+            print("loss 2..", loss_2)
 
             if summary_writer is not None:
                 add_summary(summary_writer, train_losses, epoch + 1, 'train')
