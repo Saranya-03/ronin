@@ -306,6 +306,7 @@ def train(args, **kwargs):
             add_summary(summary_writer, init_val_loss, 0, 'val')
 
     try:
+        p1, p2 = None, None
         for epoch in range(start_epoch, args.epochs):
             start_t = time.time()
             network.train()
@@ -313,38 +314,50 @@ def train(args, **kwargs):
             z = 0
             for batch_id, (feat, targ, _, _, ts) in enumerate(train_loader):
                 feat, targ = feat.to(device), targ.to(device)
-                feat_copy = feat.detach().requires_grad_(False)
+                optimizer.zero_grad()
+                # feat_copy = feat.detach().requires_grad_(False)
+                # feat_copy = feat.detach().requires_grad_(False)
                 pred = network(feat)
-                feat_contrast, random_degrees = featTransformationModule(feat_copy, device)
-                feat_contrast_c = feat_contrast.detach().requires_grad_(False)
+                feat_contrast, random_degrees = featTransformationModule(feat, device)
+                # feat_contrast_c = feat_contrast.detach().requires_grad_(False)
+                # feat_contrast_c = feat_contrast.detach().requires_grad_(False)
 
                 train_outs.append(pred.cpu().detach().numpy())
                 train_targets.append(targ.cpu().detach().numpy())
-                feat = feat.detach().requires_grad_(False)
-                pred_copy = pred.detach().requires_grad_(False)
+                # feat = feat.detach().requires_grad_(False)
+                # pred_copy = pred.detach().requires_grad_(False)
 
                 pred_c = targetTransformationModule(pred, random_degrees, device)
 
-                v_2 = network(feat_contrast_c)
+                # v_2 = network(feat_contrast_c)
+                v_2 = network(feat_contrast)
 
-                for i in range(len(pred)):
-                    if (i == 0):
-                        loss_2 = 1 - criterion_cosine(torch.unsqueeze(v_2[i], 0),
-                                                      torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
-                    else:
-                        if (torch.norm(pred_c[i]) > 0.5):
-                            loss_2 += 1 - criterion_cosine(torch.unsqueeze(v_2[i], 0),
-                                                           torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
-                        else:
-                            loss_2 += 0
+                # for i in range(len(pred)):
+                #     if (i == 0):
+                #         loss_2 = 1 - criterion_cosine(torch.unsqueeze(v_2[i], 0),
+                #                                       torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                #     else:
+                #         if (torch.norm(pred_c[i]) > 0.5):
+                #             loss_2 += 1 - criterion_cosine(torch.unsqueeze(v_2[i], 0),
+                #                                            torch.unsqueeze(pred_c[i], 0)).requires_grad_(True)
+                #         else:
+                #             loss_2 += 0
 
                 # loss_2=loss_2/len(pred)
-                loss_1 = criterion(pred.to(device), torch.tensor(phy_predicted[batch_id], device=device))
+                if (epoch==0 and batch_id==0):
+                    p1=network._parameters
+                    print("predi 0...",pred[0:5])
+                    print(torch.tensor(phy_predicted[batch_id], device=device)[0:5])
+                if (epoch==1 and batch_id==0):
+                    p2=network._parameters
+                    print("predi 1...", pred[0:5])
+                    print(torch.tensor(phy_predicted[batch_id], device=device, requires_grad=True)[0:5])
+                loss_1 = criterion(pred, torch.tensor(phy_predicted[batch_id], device=device, requires_grad=True))
                 loss_2 = criterion(v_2, pred_c)
                 total_loss = loss_1 + loss_2
-                total_loss = loss_2
+                # total_loss = loss_2
 
-                optimizer.zero_grad()
+                # optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()
                 step += 1
@@ -360,6 +373,7 @@ def train(args, **kwargs):
             print("navigator/total_loss: " + str(total_loss))
             print("loss 1..phy loss ", loss_1)
             print("loss 2..", loss_2)
+            print(p1==p2)
 
             if summary_writer is not None:
                 add_summary(summary_writer, train_losses, epoch + 1, 'train')
