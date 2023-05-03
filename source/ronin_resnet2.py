@@ -363,8 +363,8 @@ def train(args, **kwargs):
                 #     print("predi 1...", pred[0:5])
                 #     print(torch.tensor(phy_predicted[batch_id], device=device, requires_grad=True)[0:5])
 
-                # loss_1 = criterion(pred, torch.tensor(phy_predicted[batch_id], device=device, requires_grad=True))
-                loss_1 = criterion(pred, targ)
+                loss_1 = criterion(pred, torch.tensor(phy_predicted[batch_id], device=device, requires_grad=True))
+                # loss_1 = criterion(pred, targ)
                 loss_1 = torch.mean(loss_1)
                 loss_2 = criterion(v_2, pred_c)
                 loss_2 = torch.mean(loss_2)
@@ -385,8 +385,8 @@ def train(args, **kwargs):
             # print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
             #     epoch, end_t - start_t, train_losses, np.average(train_losses)))
             train_losses_all.append(np.average(train_losses))
-            print("loss 1..phy loss ", loss_1)
-            print("loss 2..rotation loss ", loss_2)
+            # print("loss 1..phy loss ", loss_1)
+            # print("loss 2..rotation loss ", loss_2)
             print('Epoch {},  average loss: {}'.format(
                 epoch, sum(loss_arr)/len(loss_arr)))
 
@@ -604,7 +604,7 @@ if __name__ == '__main__':
     parser.add_argument('--step_size', type=int, default=10)
     parser.add_argument('--window_size', type=int, default=200)
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'])
-    parser.add_argument('--lr', type=float, default=1e-06)
+    parser.add_argument('--lr', type=float, default=2e-06)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--epochs', type=int, default=10000)
     parser.add_argument('--arch', type=str, default='resnet18')
