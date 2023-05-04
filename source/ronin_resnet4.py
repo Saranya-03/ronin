@@ -254,7 +254,7 @@ def train(args, **kwargs):
     global _fc_config
     _fc_config['in_dim'] = args.window_size // 32 + 1
 
-    phy_predicted = predict_velocity(train_loader, **kwargs)
+    # phy_predicted = predict_velocity(train_loader, **kwargs)
 
     network = get_model(args.arch).to(device)
     print('Number of train samples: {}'.format(len(train_dataset)))
@@ -330,8 +330,8 @@ def train(args, **kwargs):
                 # v_2 = network(feat_contrast_c)
                 v_2 = network(feat_contrast)
 
-                loss_1 = criterion(pred, torch.tensor(phy_predicted[batch_id], device=device, requires_grad=True))
-                # loss_1 = criterion(pred, targ)
+                # loss_1 = criterion(pred, torch.tensor(phy_predicted[batch_id], device=device, requires_grad=True))
+                loss_1 = criterion(pred, targ)
                 loss_1 = torch.mean(loss_1)
                 loss_2 = criterion(v_2, pred_c)
                 loss_2 = torch.mean(loss_2)
