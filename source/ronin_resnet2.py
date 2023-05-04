@@ -382,13 +382,13 @@ def train(args, **kwargs):
 
             end_t = time.time()
             print('-------------------------')
-            # print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
-            #     epoch, end_t - start_t, train_losses, np.average(train_losses)))
+            print('Epoch {}, time usage: {:.3f}s, average loss: {}/{:.6f}'.format(
+                epoch, end_t - start_t, train_losses, np.average(train_losses)))
             train_losses_all.append(np.average(train_losses))
             # print("loss 1..phy loss ", loss_1)
             # print("loss 2..rotation loss ", loss_2)
-            print('Epoch {},  average loss: {}'.format(
-                epoch, sum(loss_arr)/len(loss_arr)))
+            # print('Epoch {},  average loss: {}'.format(
+            #     epoch, sum(loss_arr)/len(loss_arr)))
 
             if summary_writer is not None:
                 add_summary(summary_writer, train_losses, epoch + 1, 'train')
