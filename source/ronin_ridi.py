@@ -271,24 +271,25 @@ def train(args, **kwargs):
             add_summary(summary_writer, init_val_loss, 0, 'val')
 
     # //////////////////////////////////////////////////////////////////////////////////////////////
-    ronin_model_path = osp.join(args.out_dir, 'checkpoint_RoNIN_RIDI.pt')[1:]
+    # ronin_model_path = osp.join(args.out_dir, 'checkpoint_RoNIN_RIDI.pt')[1:]
 
     if not torch.cuda.is_available() or args.cpu:
         device = torch.device('cpu')
-        ronin_ridi_checkpoint = torch.load(ronin_model_path, map_location=lambda storage, location: storage)
+        ronin_ridi_checkpoint = torch.load(args.pretrained_model_path, map_location=lambda storage, location: storage)
     else:
         device = torch.device('cuda:0')
-        ronin_ridi_checkpoint = torch.load(args.model_path)
+        ronin_ridi_checkpoint = torch.load(args.pretrained_model_path)
 
     ronin_ridi_network = get_model(args.arch)
 
     ronin_ridi_network.load_state_dict(ronin_ridi_checkpoint['model_state_dict'])
     ronin_ridi_network.eval().to(device)
-    print('Model {} loaded to device {}.'.format(ronin_model_path, device))
+    print('Model {} loaded to device {}.'.format(args.pretrained_model_path, device))
 
     # //////////////////////////////////////////////////////////////////////////////////
 
     try:
+        print("Pretraining Started..........")
         for epoch in range(start_epoch, args.epochs):
 
             # targets, preds = run_test(network, seq_loader, device, True)
@@ -573,6 +574,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default=None)
     parser.add_argument('--feature_sigma', type=float, default=0.00001)
     parser.add_argument('--target_sigma', type=float, default=0.00001)
+    parser.add_argument('--pretrained_model_path', type=str, default=None)
 
     args = parser.parse_args()
 
