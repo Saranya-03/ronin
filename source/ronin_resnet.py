@@ -103,7 +103,7 @@ def train(args, **kwargs):
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
     end_t = time.time()
-    print('Training set loaded. Feature size: {}, target size: {}. Time usage: {:.3f}s'.format(
+    print('Training set loaded... Feature size: {}, target size: {}. Time usage: {:.3f}s'.format(
         train_dataset.feature_dim, train_dataset.target_dim, end_t - start_t))
     val_dataset, val_loader = None, None
     if args.val_list is not None:
@@ -126,7 +126,7 @@ def train(args, **kwargs):
     _fc_config['in_dim'] = args.window_size // 32 + 1
 
     network = get_model(args.arch).to(device)
-    print('Number of train samples: {}'.format(len(train_dataset)))
+    print('Number of training samples: {}'.format(len(train_dataset)))
     if val_dataset:
         print('Number of val samples: {}'.format(len(val_dataset)))
     total_params = network.get_num_params()
