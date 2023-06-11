@@ -11,4 +11,3 @@ numba
 plyfile
 tqdm
 scikit-learn
-neptune-client
