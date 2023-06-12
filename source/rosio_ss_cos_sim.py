@@ -19,21 +19,32 @@ from model_resnet1d import *
 _input_channel, _output_channel = 6, 2
 _fc_config = {'fc_dim': 512, 'in_dim': 7, 'dropout': 0.5, 'trans_planes': 128}
 
+
+# Define the negative cosine similarity loss
+class NegativeCosineSimilarityLoss(nn.Module):
+    def __init__(self):
+        super(NegativeCosineSimilarityLoss, self).__init__()
+
+    def forward(self, input, target):
+        similarity = nn.functional.cosine_similarity(input, target)
+        loss = 1 - similarity
+        return loss
+
+
 def targetTransformationModule(input_array, random_degrees, device):
-    input_arrayy=input_array.clone()
+    input_arrayy = input_array.clone()
     theta = math.pi / 4  # angle of rotation in radians
     cos_theta = math.cos(theta)
     sin_theta = math.sin(theta)
-    random_torch_rotation=[]
+    random_torch_rotation = []
 
     # rotation matrix
     Rzz = torch.tensor([[cos_theta, -sin_theta, 0],
-                       [sin_theta, cos_theta, 0],
-                       [0, 0, 1]],device=device)
+                        [sin_theta, cos_theta, 0],
+                        [0, 0, 1]], device=device)
 
     zeros = torch.zeros((input_arrayy.shape[0], 1), dtype=input_arrayy.dtype, device=input_arrayy.device)
     input_arrayy = torch.cat([input_arrayy, zeros], dim=1)
-
 
     for i in range(len(random_degrees)):
         # q = R.from_euler('xyz', [0, 0, random_degrees[i]], degrees=True)
@@ -46,35 +57,36 @@ def targetTransformationModule(input_array, random_degrees, device):
                            [sin_theta, cos_theta, 0],
                            [0, 0, 1]], device=device)
         random_torch_rotation.append(Rz)
-    m=input_arrayy.clone()
+    m = input_arrayy.clone()
 
-    for i in range (len(input_arrayy)):
-        input_arrayy[i]=torch.mm(m[i].unsqueeze(0),random_torch_rotation[i])[0]
+    for i in range(len(input_arrayy)):
+        input_arrayy[i] = torch.mm(m[i].unsqueeze(0), random_torch_rotation[i])[0]
     # input_arrayy=torch.mm(input_arrayy,Rzz)
-    input_arrayy=input_arrayy[:,:-1]
+    input_arrayy = input_arrayy[:, :-1]
     # input_array=torch.tensor(input_arrayl[:,:-1],device=device)
 
     return input_arrayy
 
+
 def featTransformationModule(feat, device):
     feat_clone = feat.clone()
-    random_torch_rotation=[]
-    thetaa = math.pi/4  # angle of rotation in radians
+    random_torch_rotation = []
+    thetaa = math.pi / 4  # angle of rotation in radians
     cos_thetaa = math.cos(thetaa)
     sin_thetaa = math.sin(thetaa)
     # rotation matrix
     Rzz = torch.tensor([[cos_thetaa, -sin_thetaa, 0],
-                       [sin_thetaa, cos_thetaa, 0],
-                       [0, 0, 1]], device=device)
+                        [sin_thetaa, cos_thetaa, 0],
+                        [0, 0, 1]], device=device)
 
     # random_degrees = [random.uniform(0, math.pi/2) for j in range (feat.shape[0])]
-    random_degrees=[math.pi/30 for j in range (feat.shape[0])]
+    random_degrees = [math.pi / 30 for j in range(feat.shape[0])]
     # random_degrees=[]
     # degrees=[math.pi/18,math.pi/12,math.pi/6,math.pi/9]
     # for i in range (feat.shape[0]):
     #     random_degrees.append(degrees[int(i%4)])
 
-    for i in range (feat.shape[0]):
+    for i in range(feat.shape[0]):
         theta = random_degrees[i]  # angle of rotation in radians
         # print(theta)
         cos_theta = math.cos(theta)
@@ -85,18 +97,19 @@ def featTransformationModule(feat, device):
                            [0, 0, 1]], device=device)
         random_torch_rotation.append(Rz)
 
-    feat_xyz=torch.transpose(feat_clone,1,2)
+    feat_xyz = torch.transpose(feat_clone, 1, 2)
 
     # pdb.set_trace()
-    m=feat_xyz.clone()
+    m = feat_xyz.clone()
     # print(feat_xyz[:,:,0:3].shape)
     # print(feat_xyz[:,:,0:3])
-    for i in range (len(feat_xyz)):
-        feat_xyz[i]=torch.cat([torch.mm(m[i][:,0:3],random_torch_rotation[i]),torch.mm(m[i][:,3:],random_torch_rotation[i])],dim=1)
+    for i in range(len(feat_xyz)):
+        feat_xyz[i] = torch.cat(
+            [torch.mm(m[i][:, 0:3], random_torch_rotation[i]), torch.mm(m[i][:, 3:], random_torch_rotation[i])], dim=1)
         # feat_xyz[i] = torch.cat([torch.mm(m[i][:, 0:3], Rzz), torch.mm(m[i][:, 3:], Rzz)], dim=1)
 
     # print(torch.cat([torch.transpose(feat,1,2),feat_xyz],dim=2).cpu().numpy()[0][0])
-    feat_xyz_tensor=torch.transpose(feat_xyz,1,2)
+    feat_xyz_tensor = torch.transpose(feat_xyz, 1, 2)
     output_tensor = feat_xyz_tensor
 
     return [output_tensor, random_degrees]
@@ -226,7 +239,7 @@ def train(args, **kwargs):
     print('Total number of parameters: ', total_params)
 
     criterion = torch.nn.MSELoss()
-    criterion_cosine = NegativeCosineSimilarityLoss()
+    criterion_cosine = torch.nn.CosineSimilarity(dim=1)
     optimizer = torch.optim.Adam(network.parameters(), args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=10, verbose=True, eps=1e-12)
 
@@ -283,16 +296,25 @@ def train(args, **kwargs):
                 feat_contrast, random_degree = featTransformationModule(feat, device)
                 feat_contrast_pred = network(feat_contrast)
 
-                pred_contrast = targetTransformationModule(pred,random_degree,device)
+                pred_contrast = targetTransformationModule(pred, random_degree, device)
 
                 loss_pretrained = criterion(pred, pretrained_pred)
                 loss_pretrained = torch.mean(loss_pretrained)
-                loss_ss = criterion_cosine(feat_contrast_pred, pred_contrast)
-                loss_ss = torch.mean(loss_ss)
-                loss = loss_pretrained + loss_ss
 
-                # loss = criterion(pred, targ)
-                # loss = torch.mean(loss)
+                loss_ss = 1- criterion_cosine(feat_contrast_pred, pred_contrast)
+
+                # loss_ss = 0
+                # print("%%%%%%%%%%%%", len(pred))
+                # for i in range(len(pred)):
+                #     print(pred[i])
+                #     if torch.norm(pred[i]) > 0.5:
+                #     # if np.linalg.norm(pred.detach().numpy()[i]) > 0.5:
+                #         print("in...")
+                #         loss_ss += criterion_cosine(feat_contrast_pred, pred_contrast)
+
+                loss_ss = torch.mean(loss_ss)
+                loss = args.n1 * loss_pretrained + args.n2 * loss_ss
+
                 loss.backward()
                 optimizer.step()
                 step += 1
@@ -521,7 +543,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default=None)
     parser.add_argument('--feature_sigma', type=float, default=0.00001)
     parser.add_argument('--target_sigma', type=float, default=0.00001)
-    parser.add_argument('--pretrained_model_path', type=str,default=None)
+    parser.add_argument('--pretrained_model_path', type=str, default=None)
     parser.add_argument("--n1", type=float, default=1)
     parser.add_argument("--n2", type=float, default=1)
 
@@ -538,12 +560,3 @@ if __name__ == '__main__':
 
 
 
-# Define the negative cosine similarity loss
-class NegativeCosineSimilarityLoss(nn.Module):
-    def __init__(self):
-        super(NegativeCosineSimilarityLoss, self).__init__()
-
-    def forward(self, input, target):
-        similarity = nn.functional.cosine_similarity(input, target)
-        loss = 1 - similarity
-        return loss
