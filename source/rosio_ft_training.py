@@ -324,9 +324,6 @@ def train(args, **kwargs):
 
                 total_loss = args.k1 * loss_p + args.k2 * loss_t
 
-                print("\n *************** loss_t.. \n ", loss_t.requires_grad, "\n *************** loss_p\n",
-                      loss_p.requires_grad, "\n ***************  total_loss \n", total_loss.requires_grad)
-
                 optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()
